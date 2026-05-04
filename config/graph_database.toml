@@ -1,0 +1,6 @@
+[default]
+type = "kuzu"
+driver = "kuzu"
+
+[default.specific]
+path = "data/entity_graph"

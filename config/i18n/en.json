@@ -1,0 +1,22 @@
+{
+  "cli.menu.init": "Initialize knowledge graphs",
+  "cli.menu.ask": "Start multi-turn Q&A",
+  "cli.menu.exit": "Exit",
+  "cli.menu.choose": "Choose",
+  "cli.menu.goodbye": "Goodbye!",
+  "cli.init.starting": "Initializing knowledge graphs...",
+  "cli.init.sampling": "Sampling data...",
+  "cli.init.schema_agent": "Schema agent reasoning...",
+  "cli.init.mapping_agent": "Mapping agent reasoning...",
+  "cli.init.compiling": "Compiling graph...",
+  "cli.init.entity_ready": "Entity graph ready: {nodes} nodes, {edges} edges",
+  "cli.init.metric_ready": "Metric lineage graph ready",
+  "cli.init.all_ready": "Both graphs initialized",
+  "cli.init.press_enter": "Press Enter to return to menu",
+  "cli.ask.welcome": "Welcome to DataSemAgent Q&A! Type /exit to return to menu.",
+  "cli.ask.not_initialized": "Knowledge graphs not initialized. Please run init first.",
+  "cli.ask.prompt": "Your question",
+  "cli.error.model_not_found": "Semantic model file not found: {path}",
+  "cli.error.model_not_specified": "Specify model path via --model or config.toml paths.semantics",
+  "cli.error.db_not_configured": "Database config 'default' not found, check config/database.toml"
+}

@@ -1,0 +1,15 @@
+[default]
+type = "sqlite"
+driver = "aiosqlite"
+echo = false
+
+[default.specific]
+path = "data/test.db"
+timeout = 30.0
+
+[default.specific.pragmas]
+journal_mode = "WAL"
+foreign_keys = "ON"
+
+[default.pool]
+max_size = 10

@@ -1,0 +1,54 @@
+# MCP Servers Configuration
+# 每个服务器一个配置项
+# 支持两种模式：
+# 1. auto_discover: true - 从MCP服务器自动发现工具
+# 2. tools: [...] - 手动配置工具列表
+
+filesystem:
+  transport_type: "streamable-http"
+  url: "http://localhost:8000"
+  auto_discover: true
+  timeout: 30
+  headers: {}
+
+custom:
+  transport_type: "streamable-http"
+  url: "http://localhost:8001"
+  timeout: 30
+  tools:
+    - name: "hello"
+      description: "Say hello to the user"
+      parameters:
+        type: "object"
+        properties:
+          name:
+            type: "string"
+            description: "Name to greet"
+        required: ["name"]
+
+    - name: "calculate"
+      description: "Perform basic calculation"
+      parameters:
+        type: "object"
+        properties:
+          operation:
+            type: "string"
+            enum: ["add", "subtract", "multiply", "divide"]
+          a:
+            type: "number"
+          b:
+            type: "number"
+        required: ["operation", "a", "b"]
+
+local:
+  transport_type: "stdio"
+  command: "python"
+  args: ["-m", "my_mcp_server"]
+  timeout: 30
+  auto_discover: true
+
+python_module:
+  transport_type: "python-module"
+  module_path: "mymodule:app"
+  timeout: 30
+  auto_discover: true

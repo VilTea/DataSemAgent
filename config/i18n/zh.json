@@ -1,0 +1,22 @@
+{
+  "cli.menu.init": "初始化知识图谱",
+  "cli.menu.ask": "开始多轮问答",
+  "cli.menu.exit": "退出",
+  "cli.menu.choose": "请选择",
+  "cli.menu.goodbye": "再见！",
+  "cli.init.starting": "正在初始化知识图谱...",
+  "cli.init.sampling": "数据采样中...",
+  "cli.init.schema_agent": "Schema 智能体推理中...",
+  "cli.init.mapping_agent": "数据映射智能体推理中...",
+  "cli.init.compiling": "图谱编译中...",
+  "cli.init.entity_ready": "实体图谱就绪: {nodes} 节点, {edges} 边",
+  "cli.init.metric_ready": "指标血缘图谱就绪",
+  "cli.init.all_ready": "两张图谱初始化完成",
+  "cli.init.press_enter": "按 Enter 返回主菜单",
+  "cli.ask.welcome": "欢迎使用 DataSemAgent 问答模式！输入 /exit 返回主菜单。",
+  "cli.ask.not_initialized": "知识图谱尚未初始化，请先执行 init 构建图谱。",
+  "cli.ask.prompt": "你的问题",
+  "cli.error.model_not_found": "语义模型文件不存在: {path}",
+  "cli.error.model_not_specified": "请通过 --model 参数或 config.toml 中的 paths.semantics 指定语义模型路径",
+  "cli.error.db_not_configured": "数据库配置 'default' 不存在，请检查 config/database.toml"
+}
