@@ -80,7 +80,7 @@ Built deterministically from the OSI model — no LLM calls needed.
 ## 🚀 Quick Start
 
 ```bash
-git clone <repo-url> && cd DataSemAgent
+git clone https://github.com/VilTea/DataSemAgent.git && cd DataSemAgent
 uv sync
 cp config/llm/config.toml.demo config/llm/config.toml   # add your API key
 uv run python run.py --lang zh
