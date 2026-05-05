@@ -11,7 +11,7 @@ Translates business questions into executable queries across three integrated pi
 
 1. 📐 **Model** — Define business terms (metrics, dimensions) in an OSI semantic model
 2. 🔍 **Index** — Build entity graphs and metric lineage from your database
-3. ⚡ **Query** — Write logical SQL using business terms; the agent validates, translates, and executes it as physical SQL
+3. ⚡ **Ask** — Ask questions in natural language; the agent writes logical SQL, validates, translates, and executes it
 
 ---
 
@@ -19,7 +19,7 @@ Translates business questions into executable queries across three integrated pi
 
 ### 🧱 Semantic SQL
 
-Logical SQL with business terms is validated and translated to physical SQL.
+The agent writes logical SQL using business terms, then validates and translates it to physical SQL.
 
 ```
 Logical                               Physical
