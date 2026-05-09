@@ -90,7 +90,7 @@ class EmitDataMappingTool(BaseTool):
         "Each edge needs: label, from (entity+key_column), to (entity+key_column, "
         "must be a column in the FROM entity's source table)."
     )
-    strict: bool = True
+    strict: bool = False
     parameters: dict = {
         "type": "object",
         "properties": {
@@ -303,6 +303,10 @@ def _build_schema_prompt(model: SemanticModel, samples: dict) -> str:
             f"  {r.from_dataset}.{r.from_columns} -> {r.to_dataset}.{r.to_columns}"
             for r in (model.relationships or [])
         )
+        + "\n\n"
+        "IMPORTANT: Edge labels must be DISTINCT from entity labels.\n"
+        "If you have an entity 'customer', do NOT name an edge 'customer' —\n"
+        "use descriptive names like 'purchased_by', 'sold_on', 'lives_in'.\n"
         + f"\n\n{sample_text}"
     )
 
@@ -490,6 +494,15 @@ class MappingAgentNode(AgentNode):
 
         err = extract_err or "No structured output from LLM"
         logger.error(err)
+        # Dump full memory for diagnostics
+        for i, msg in enumerate(context.memory.messages[-4:]):
+            tc_names = [tc.function.name for tc in (msg.tool_calls or [])]
+            logger.error(
+                f"  memory[{i - len(context.memory.messages)}] "
+                f"role={msg.role} content={msg.content!r:.200} "
+                f"tool_calls={tc_names}"
+            )
+        logger.error(f"  finish_reason={exec_res}")
         await _emit(shared, {"stage": _STAGE, "step": "mapping_agent", "status": "error", "error": err})
         return _abort_on_max(shared, "mapping_agent", "error")
 

@@ -111,10 +111,9 @@ class OpenAILLM(BaseModel):
             messages=[msg.model_dump() for msg in messages],
             temperature=temperature or self.config.temperature,
             max_tokens=self.config.max_tokens,
-            reasoning_effort='high',
             # max_completion_tokens=self.config.max_tokens,
             stream=stream,
-            extra_body={ "thinking": { "type": "enabled" } }
+            **self.config.args
         )
         if stream:
             content = ''
@@ -168,8 +167,7 @@ class OpenAILLM(BaseModel):
             "max_tokens": self.config.max_tokens,
             # "max_completion_tokens": self.config.max_tokens,
             "stream": stream,
-            "reasoning_effort": "high",
-            "extra_body": {"thinking": {"type": "enabled"}}
+            **self.config.args
         }
         if tools:
             request_params["tools"] = tools
@@ -363,6 +361,7 @@ class AnthropicLLM(BaseModel):
             "model": self.config.model,
             "max_tokens": self.config.max_tokens,
             "messages": anthropic_messages,
+            **self.config.args
         }
         if system:
             kwargs["system"] = system
@@ -406,7 +405,7 @@ class AnthropicLLM(BaseModel):
     async def ask_tool(
         self, messages: list[Message], stream: bool = True,
         tools: list[dict] | None = None, temperature: float | None = None,
-        tool_choice: TOOL_CHOICE_TYPE | None = ToolChoice.AUTO,
+        tool_choice: TOOL_CHOICE_TYPE | None = ToolChoice.AUTO
     ) -> AsyncGenerator[AgentCompletion | None]:
         system, anthropic_messages = self._parse_messages(messages)
 
@@ -414,6 +413,7 @@ class AnthropicLLM(BaseModel):
             "model": self.config.model,
             "max_tokens": self.config.max_tokens,
             "messages": anthropic_messages,
+            **self.config.args
         }
         if system:
             kwargs["system"] = system

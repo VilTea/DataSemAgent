@@ -63,6 +63,7 @@ class LLMSettings(BaseModel):
     temperature: float = Field(default=1.0, description="Sampling temperature")
     api_type: str = Field(default="openai", description="Azure, Openai, or Ollama")
     api_version: str | None = Field(default=None, description="Azure Openai version if AzureOpenai")
+    args: dict[str, Any] = Field(default={}, description="Arguments")
 
     setting_name: ClassVar[str] = "llm"
     base_path: ClassVar[Path] = PROJECT_ROOT / "config" / "llm" / "config.toml"

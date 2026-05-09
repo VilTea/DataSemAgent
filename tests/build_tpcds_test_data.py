@@ -18,7 +18,7 @@ import aiosqlite
 import yaml
 
 MODEL_PATH = Path(__file__).resolve().parent.parent / "config" / "semantics" / "tpcds_semantic_model.yaml"
-TEST_MODEL_PATH = Path(__file__).resolve().parent / "tpcds_model_sqlite.yaml"
+TEST_MODEL_PATH = Path(__file__).resolve().parent / "config" / "semantics" / "tpcds_model_sqlite.yaml"
 DEFAULT_DB = Path(__file__).resolve().parent.parent / "data" / "test.db"
 
 
