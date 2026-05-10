@@ -15,7 +15,6 @@ from app.semantics.graph.entity.nodes import (
     _MAX_RETRIES,
     _STAGE,
     CompilerNode,
-    MappingAgentNode,
     SamplerNode,
     SchemaAgentNode,
     SchemaValidatorNode,
@@ -114,10 +113,12 @@ class CliProgressConsumer(EventConsumer):
 
 
 def build_entity_flow() -> AsyncFlow:
+    from app.semantics.graph.entity.nodes import MappingFlowNode
+
     sampler = SamplerNode(max_retries=1)
     schema_agent = SchemaAgentNode()
     schema_validator = SchemaValidatorNode(max_retries=1)
-    mapping_agent = MappingAgentNode()
+    mapping_agent = MappingFlowNode(max_retries=3)
     validator = ValidatorNode(max_retries=1)
     compiler = CompilerNode(max_retries=1)
     abort = AsyncNode()
@@ -131,6 +132,8 @@ def build_entity_flow() -> AsyncFlow:
     schema_validator - "abort" >> abort
     mapping_agent - "ok" >> validator
     mapping_agent - "error" >> mapping_agent
+    mapping_agent - "abort" >> abort
+    mapping_agent - "retry_mapping" >> mapping_agent
     validator - "retry" >> mapping_agent
     validator - "retry_schema" >> schema_agent
     validator - "retry_mapping" >> mapping_agent
@@ -140,8 +143,6 @@ def build_entity_flow() -> AsyncFlow:
     compiler - "default" >> abort
     compiler - "abort" >> abort
     schema_agent - "abort" >> abort
-    mapping_agent - "abort" >> abort
-    mapping_agent - "retry_mapping" >> mapping_agent
 
     return AsyncFlow(start=sampler)
 

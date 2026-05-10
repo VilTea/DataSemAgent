@@ -28,19 +28,18 @@ class FieldExpander:
         return exp.alias_(physical, alias)
 
     def build_dimension_expression(self, alias: str, physical: str) -> exp.Expression:
-        parts = physical.split('.')
-        if len(parts) == 2:
-            table, col = parts
-            return exp.alias_(exp.column(col, table), alias)
-        return exp.alias_(exp.column(physical), alias)
+        parsed = sqlglot.parse_one(physical, dialect=None)
+        if isinstance(parsed, exp.Column):
+            return exp.alias_(parsed, alias)
+        # Expression (computed dimension): keep as-is
+        return exp.alias_(parsed, alias)
 
     def build_column_expression(self, alias: str, physical) -> exp.Expression:
         if isinstance(physical, str):
-            parts = physical.split('.')
-            if len(parts) == 2:
-                table, col = parts
-                return exp.alias_(exp.column(col, table), alias)
-            return exp.alias_(exp.column(physical), alias)
+            parsed = sqlglot.parse_one(physical, dialect=None)
+            if isinstance(parsed, exp.Column):
+                return exp.alias_(parsed, alias)
+            return exp.alias_(parsed, alias)
         return exp.alias_(physical, alias)
 
     # ------------------------------------------------------------------ #
@@ -71,7 +70,6 @@ class FieldExpander:
         known_names = {ds.name for ds in self._parser._model.datasets}
         if table_ref in known_sources or table_ref in known_names:
             return False
-        # Check if table_ref maps to a known source (table alias) vs self-mapping (CTE)
         resolved = ctx.table_alias_map.get(table_ref)
         if resolved and (resolved in known_sources or resolved in known_names):
             return False
@@ -88,17 +86,15 @@ class FieldExpander:
         try:
             mapping = self._parser.resolve_field(field_name)
             physical_col = mapping.physical_expression
+            parsed = sqlglot.parse_one(physical_col, dialect=None)
 
             table_ref = self.get_table_reference(item, ctx)
-
             if not table_ref and mapping.dataset_name:
                 table_ref = ctx.get_table_alias(mapping.dataset_name)
-
             if not table_ref:
                 current = self._scope_mgr.get_current_source(ctx)
                 if current and current != 'cte':
                     table_ref = current
-
             if not table_ref:
                 for src_alias, phys_name in ctx.table_alias_map.items():
                     try:
@@ -113,22 +109,32 @@ class FieldExpander:
                     if table_ref:
                         break
 
-            if any(op in physical_col for op in ['+', '-', '*', '/']):
-                parsed_expr = sqlglot.parse_one(physical_col, dialect=None)
-                for col in parsed_expr.find_all(exp.Column):
-                    self._col_transformer.transform_column(col, ctx)
-                return parsed_expr.sql()
+            # CTE reference: use logical field name as alias (CTE columns are logical names)
+            if table_ref and self._is_cte_ref(table_ref, ctx):
+                return (f"{table_ref}.{field_name}" if isinstance(parsed, exp.Column)
+                        else parsed.sql())
 
+            # Expression (not a plain column): apply table refs to inner columns
+            if not isinstance(parsed, exp.Column):
+                for col in parsed.find_all(exp.Column):
+                    self._col_transformer.transform_column(col, ctx)
+                if table_ref:
+                    for col in parsed.find_all(exp.Column):
+                        if not col.table:
+                            col.set('table', table_ref)
+                return parsed.sql()
+
+            # Simple column
             if table_ref:
-                if self._is_cte_ref(table_ref, ctx):
-                    # CTE columns are already logical aliases — pass through unchanged
-                    return f"{table_ref}.{field_name}"
-                return f"{table_ref}.{physical_col}"
-            return physical_col
+                parsed.set('table', table_ref)
+            return parsed.sql()
 
         except FieldNotFoundError:
             table_ref = self.get_table_reference(item, ctx)
-            return f"{table_ref}.{field_name}" if table_ref else field_name
+            if table_ref:
+                col = exp.column(field_name, table_ref)
+                return col.sql()
+            return field_name
 
     def expand_column(self, item, alias: str, ctx):
         name = self._classifier.get_item_name(item)
@@ -137,30 +143,22 @@ class FieldExpander:
         try:
             mapping = self._parser.resolve_field(name)
             physical_expr = mapping.physical_expression
+            parsed = sqlglot.parse_one(physical_expr, dialect=None)
 
-            if mapping.is_dimension:
-                table_for_col = table_ref or self.find_table_for_field(
-                    mapping.dataset_name, ctx
-                )
-                if table_for_col:
-                    return f"{table_for_col}.{physical_expr}"
-                return physical_expr
-
-            parsed = sqlglot.parse_one(physical_expr)
             table_for_col = table_ref or self.find_table_for_field(
                 mapping.dataset_name, ctx
             )
             if table_for_col:
                 self._add_table_prefix_to_expression(parsed, table_for_col)
 
-            if physical_expr != name:
-                return exp.alias_(parsed, alias)
-            return parsed
+            if isinstance(parsed, exp.Column) and parsed.name == name:
+                return parsed
+            return exp.alias_(parsed, alias)
 
         except FieldNotFoundError:
             if table_ref:
-                return f"{table_ref}.{name}"
-            return name
+                return exp.column(name, table_ref)
+            return exp.column(name)
 
     # ------------------------------------------------------------------ #
     # Table reference helpers

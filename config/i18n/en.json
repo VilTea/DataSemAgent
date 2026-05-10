@@ -2,6 +2,7 @@
   "cli.menu.init": "Initialize knowledge graphs",
   "cli.menu.ask": "Start multi-turn Q&A",
   "cli.menu.exit": "Exit",
+  "cli.menu.build_db": "Build test database",
   "cli.menu.choose": "Choose",
   "cli.menu.goodbye": "Goodbye!",
   "cli.init.starting": "Initializing knowledge graphs...",
@@ -18,5 +19,14 @@
   "cli.ask.prompt": "Your question",
   "cli.error.model_not_found": "Semantic model file not found: {path}",
   "cli.error.model_not_specified": "Specify model path via --model or config.toml paths.semantics",
-  "cli.error.db_not_configured": "Database config 'default' not found, check config/database.toml"
+  "cli.error.db_not_configured": "Database config 'default' not found, check config/database.toml",
+  "cli.build_db.starting": "Build test database",
+  "cli.build_db.model": "Model:",
+  "cli.build_db.db": "Database:",
+  "cli.build_db.db_type": "Configured DB type is {type}, build script uses SQLite — mismatch",
+  "cli.build_db.current": "Current:",
+  "cli.build_db.build": "Build:",
+  "cli.build_db.confirm": "Confirm build",
+  "cli.build_db.running": "Building...",
+  "cli.build_db.done": "Test database built successfully"
 }

@@ -13,10 +13,11 @@ class MappingValidator:
         for ds in model.datasets:
             self._pk_map[ds.source] = set(ds.primary_key or [])
 
-    def validate(self) -> list[str]:
+    def validate(self, incremental: bool = False) -> list[str]:
         errors: list[str] = []
-        self._check_schema_coverage(errors)
-        self._check_table_column_refs(errors)
+        if not incremental:
+            self._check_schema_coverage(errors)
+        self._check_table_column_refs(errors, incremental=incremental)
         self._check_key_uniqueness(errors)
         self._check_weak_entity_parents(errors)
         return errors
@@ -56,12 +57,15 @@ class MappingValidator:
         for r in mapping_rels - schema_rels:
             errors.append(f"Mapping edge '{r}' not in graph schema")
 
-    def _check_table_column_refs(self, errors: list[str]) -> None:
+    def _check_table_column_refs(self, errors: list[str], incremental: bool = False) -> None:
         known_tables = {ds.source for ds in self._model.datasets}
         for em in self._mapping.entities:
             ns = em.node_source
             if hasattr(ns, "table") and ns.table not in known_tables:
                 errors.append(f"Entity '{em.entity}' references unknown table '{ns.table}'")
+
+        if incremental:
+            return  # edges referencing entities not yet added are expected
 
         for em in self._mapping.edges:
             if em.from_.entity not in self._mapping.entity_keys():

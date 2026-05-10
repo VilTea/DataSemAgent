@@ -18,6 +18,8 @@ from app.semantics.graph.entity.schema import EntityGraphSchema
 from app.semantics.graph.entity.validator import MappingValidator
 from app.semantics.graph.init_state import init_state
 from app.semantics.models import SemanticModel
+from pydantic import PrivateAttr
+
 from app.tool.base import BaseTool, ToolResult
 
 
@@ -79,83 +81,6 @@ class EmitEntitySchemaTool(BaseTool):
 
     async def execute(self, tool_call: ToolCall, **kwargs) -> ToolResult:
         return ToolResult.success_response(tool_call.id, self.name, "Schema captured.")
-
-
-class EmitDataMappingTool(BaseTool):
-    permission: str = "agent"
-    name: str = "emit_data_mapping"
-    description: str = (
-        "Emit the data mapping. Each entity needs: entity (matching a schema label), "
-        "node_source (type: table|union|join with table/key_columns), properties (dict). "
-        "Each edge needs: label, from (entity+key_column), to (entity+key_column, "
-        "must be a column in the FROM entity's source table)."
-    )
-    strict: bool = False
-    parameters: dict = {
-        "type": "object",
-        "properties": {
-            "entities": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "entity": {"type": "string", "description": "Entity label from schema"},
-                        "node_source": {
-                            "type": "object",
-                            "properties": {
-                                "type": {"type": "string", "enum": ["table", "union", "join"]},
-                                "table": {"type": "string"},
-                                "key_columns": {
-                                    "type": "array", "items": {"type": "string"},
-                                    "description": "Column(s) for the entity key. Use multiple for composite PKs.",
-                                },
-                            },
-                            "required": ["type", "table", "key_columns"],
-                        },
-                        "properties": {
-                            "type": "object",
-                            "description": "Property name → column reference in the source table. Every entity should include at least the columns visible in the sample data.",
-                        },
-                        "strong_parents": {
-                            "type": "object",
-                            "description": "Parent entity label → FK column in this entity's source table. For weak entities that depend on multiple parents, include one entry per parent."
-                        },
-                    },
-                    "required": ["entity", "node_source", "properties"],
-                },
-            },
-            "edges": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "label": {"type": "string"},
-                        "from": {
-                            "type": "object",
-                            "properties": {"entity": {"type": "string"}, "key_column": {"type": "string"}},
-                            "required": ["entity", "key_column"],
-                        },
-                        "to": {
-                            "type": "object",
-                            "properties": {
-                                "entity": {"type": "string"},
-                                "key_column": {
-                                    "type": "string",
-                                    "description": "FK column in the FROM entity's source table (e.g. ss_customer_sk in store_sales)",
-                                },
-                            },
-                            "required": ["entity", "key_column"],
-                        },
-                    },
-                    "required": ["label", "from", "to"],
-                },
-            },
-        },
-        "required": ["entities", "edges"],
-    }
-
-    async def execute(self, tool_call: ToolCall, **kwargs) -> ToolResult:
-        return ToolResult.success_response(tool_call.id, self.name, "Mapping captured.")
 
 
 # ── Helpers ──
@@ -316,7 +241,13 @@ def _build_mapping_prompt(model: SemanticModel, schema: EntityGraphSchema, sampl
     schema_json = schema.model_dump_json(indent=2)
     return (
         "Given this entity graph schema, produce a data mapping.\n"
-        "Call emit_data_mapping with your result. Do NOT output raw YAML.\n\n"
+        "You may call emit_data_mapping MULTIPLE TIMES to build the mapping incrementally.\n"
+        "Each call adds to the previous result: entities merge by label, edges merge by label.\n"
+        "Stop calling when all entities and edges are complete.\n\n"
+        "BUILD IN STAGES:\n"
+        "1. First call: emit 1-2 entities (just entities, no edges yet)\n"
+        "2. Next call(s): emit remaining entities\n"
+        "3. Final call(s): emit edges (all at once is fine)\n\n"
         "For each entity, include a 'properties' dict mapping logical property names\n"
         "to column references in the source table. Include all meaningful columns from\n"
         "the sample data (e.g. {\"name\": \"c_first_name\", \"email\": \"c_email_address\"}).\n"
@@ -422,89 +353,310 @@ class SchemaAgentNode(AgentNode):
         return _abort_on_max(shared, "schema_agent", "error")
 
 
-class MappingAgentNode(AgentNode):
-    name: str = "entity-mapping-agent"
-    description: str = "Produces data mapping from entity graph schema and database"
-    system_prompt: str = ""
-    tools: list = [EmitDataMappingTool()]
+def _merge_mapping(acc: DataMapping, delta: DataMapping) -> DataMapping:
+    """Merge *delta* into *acc*. Entities merge by label, edges by label (override)."""
+    if acc is None:
+        return delta
+    by_label = {e.entity: e for e in acc.entities}
+    for e in delta.entities:
+        by_label[e.entity] = e
+    acc.entities = list(by_label.values())
+    by_label = {e.label: e for e in acc.edges}
+    for e in delta.edges:
+        by_label[e.label] = e
+    acc.edges = list(by_label.values())
+    return acc
 
-    async def exec_fallback_async(self, prep_res, exc):
-        logger.error(f"MappingAgentNode crashed: {exc}", exc_info=True)
-        await _emit(self._shared, {"stage": _STAGE, "step": "mapping_agent", "status": "error",
-                                   "error": f"Node crashed: {exc}"})
-        return _abort_on_max(self._shared, "mapping_agent", "error")
 
-    async def prep_async(self, shared: dict[str, Any]) -> AgentContext:
-        self._shared = shared
-        model: SemanticModel = shared[K_MODEL]
-        schema: EntityGraphSchema | None = shared.get(K_SCHEMA)
-        samples: dict = shared.get(K_SAMPLES, {})
-        prev_errors: list[str] = shared.get(K_VALIDATION_ERRORS, [])
+class MappingFlowNode(_EntityFlowNode):
+    """Runs the mapping phase as an isolated PocketFlow React loop.
+
+    Creates a private agent with stateful tools.  Each emit_data_mapping
+    call is validated inline; errors are returned as tool output so the
+    LLM can self-correct.  When the agent finishes, the accumulated
+    mapping is copied to the parent shared dict.
+    """
+
+    async def exec_async(self, prep_res: dict[str, Any]) -> str:
+        from app.flow import react_flow
+
+        parent_shared = prep_res
+        model: SemanticModel = parent_shared[K_MODEL]
+        schema: EntityGraphSchema | None = parent_shared.get(K_SCHEMA)
+        samples: dict = parent_shared.get(K_SAMPLES, {})
 
         if schema is None:
-            self.system_prompt = "Error: no schema available"
-        else:
-            self.system_prompt = _build_mapping_prompt(model, schema, samples)
+            return _abort_on_max(parent_shared, "mapping_agent", "error")
 
-        if not hasattr(self, '_own_memory'):
-            from app.schema import Memory
-            self._own_memory = Memory()
+        prompt = _build_mapping_prompt(model, schema, samples)
+        emit_tool = EmitDataMappingTool(model=model, schema=schema)
+        read_tool = ReadMappingTool(emit_tool)
+        delete_tool = DeleteMappingPathTool(emit_tool)
 
-        if prev_errors:
-            _inject_memory_error(self._own_memory, "emit_data_mapping", prev_errors)
+        agent = AgentNode(
+            name="entity-mapping-agent",
+            system_prompt=prompt,
+            tools=[emit_tool, read_tool, delete_tool],
+        )
+        flow = react_flow(agent_node=agent)
 
-        await _emit(shared, {"stage": _STAGE, "step": "mapping_agent", "status": "running",
-                             "retry": bool(prev_errors), "prev_errors": prev_errors})
+        await _emit(parent_shared, {"stage": _STAGE, "step": "mapping_agent",
+                                    "status": "running"})
 
-        ctx = await super().prep_async(shared)
-        for msg in ctx.memory.messages:
-            if msg.role == "system":
-                self._own_memory.upsert_message(msg, 0)
-        object.__setattr__(ctx, '_memory', self._own_memory)
-        return ctx
+        await flow._run_async(flow.context.get_shared())
 
-    async def post_async(self, shared, context, exec_res) -> str:
-        mapping_data, extract_err = _extract_tool_args(context, "emit_data_mapping")
-        if mapping_data:
-            try:
-                mapping = DataMapping.model_validate(mapping_data)
-                shared[K_MAPPING] = mapping
-                shared[K_VALIDATION_ERRORS] = []
-                await _emit(shared, {"stage": _STAGE, "step": "mapping_agent", "status": "done",
-                                     "result": {
-                                         "entities": [
-                                             {"name": e.entity, "table": _ns_table(e.node_source),
-                                              "key_columns": _ns_key_cols(e.node_source),
-                                              "properties": e.properties}
-                                             for e in mapping.entities
-                                         ],
-                                         "edges": [
-                                             {"label": e.label, "from": e.from_.entity, "to": e.to.entity,
-                                              "table": _edge_table(mapping, e),
-                                              "fk_column": e.to.key_column}
-                                             for e in mapping.edges
-                                         ]}})
-                return "ok"
-            except Exception as e:
-                logger.error(f"Mapping validation failed: {e}", exc_info=True)
-                shared[K_VALIDATION_ERRORS] = [str(e)]
-                await _emit(shared, {"stage": _STAGE, "step": "mapping_agent", "status": "error",
-                                     "error": str(e)})
-                return _abort_on_max(shared, "mapping_agent", "error")
+        mapping = emit_tool.accumulated
+        if mapping and (mapping.entities or mapping.edges):
+            parent_shared[K_MAPPING] = mapping
+            parent_shared[K_VALIDATION_ERRORS] = []
+            await _emit(parent_shared, {"stage": _STAGE, "step": "mapping_agent",
+                                        "status": "done",
+                                        "result": _mapping_result(mapping)})
+            return "ok"
 
-        err = extract_err or "No structured output from LLM"
-        logger.error(err)
-        # Dump full memory for diagnostics
-        for i, msg in enumerate(context.memory.messages[-4:]):
-            tc_names = [tc.function.name for tc in (msg.tool_calls or [])]
-            logger.error(
-                f"  memory[{i - len(context.memory.messages)}] "
-                f"role={msg.role} content={msg.content!r:.200} "
-                f"tool_calls={tc_names}"
+        return _abort_on_max(parent_shared, "mapping_agent", "error")
+
+    async def exec_fallback_async(self, prep_res, exc):
+        logger.error(f"MappingFlowNode crashed: {exc}", exc_info=True)
+        await _emit(self._shared, {"stage": _STAGE, "step": "mapping_agent",
+                                   "status": "error", "error": f"Node crashed: {exc}"})
+        return _abort_on_max(self._shared, "mapping_agent", "error")
+
+
+# ── Stateful mapping tools ────────────────────────────────────────────────
+
+class EmitDataMappingTool(BaseTool):
+    """Stateful: accumulates partial mapping, validates on each call."""
+
+    permission: str = "agent"
+    name: str = "emit_data_mapping"
+    description: str = (
+        "Emit a partial data mapping. Call multiple times to build incrementally. "
+        "Entities merge by label, edges merge by label — later calls override earlier ones."
+    )
+    strict: bool = False
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "entities": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "entity": {"type": "string", "description": "Entity label from schema"},
+                        "node_source": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string", "enum": ["table", "union", "join"]},
+                                "table": {"type": "string"},
+                                "key_columns": {
+                                    "type": "array", "items": {"type": "string"},
+                                    "description": "Column(s) for the entity key.",
+                                },
+                            },
+                            "required": ["type", "table", "key_columns"],
+                        },
+                        "properties": {
+                            "type": "object",
+                            "additionalProperties": {"type": "string"},
+                            "description": "Property name → column reference",
+                        },
+                        "strong_parents": {
+                            "type": "object",
+                            "additionalProperties": {"type": "string"},
+                            "description": "Parent label → FK column",
+                        },
+                    },
+                    "required": ["entity", "node_source", "properties"],
+                },
+            },
+            "edges": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "label": {"type": "string"},
+                        "from": {
+                            "type": "object",
+                            "properties": {"entity": {"type": "string"}, "key_column": {"type": "string"}},
+                            "required": ["entity", "key_column"],
+                        },
+                        "to": {
+                            "type": "object",
+                            "properties": {
+                                "entity": {"type": "string"},
+                                "key_column": {"type": "string",
+                                               "description": "FK column in FROM entity's source table"},
+                            },
+                            "required": ["entity", "key_column"],
+                        },
+                    },
+                    "required": ["label", "from", "to"],
+                },
+            },
+        },
+        "required": ["entities", "edges"],
+    }
+
+    _accumulated: DataMapping | None = PrivateAttr(default=None)
+    _model: SemanticModel = PrivateAttr()
+    _schema: EntityGraphSchema | None = PrivateAttr(default=None)
+
+    def __init__(self, model: SemanticModel, schema: EntityGraphSchema | None = None, **kwargs):
+        super().__init__(**kwargs)
+        self._model = model
+        self._schema = schema
+
+    @property
+    def accumulated(self) -> DataMapping | None:
+        return self._accumulated
+
+    async def execute(self, tool_call: ToolCall, **kwargs) -> ToolResult:
+        try:
+            delta = DataMapping.model_validate(tool_call.function.arguments_dict)
+        except Exception as e:
+            return ToolResult.failure_response(
+                tool_call.id, self.name, f"Invalid mapping: {e}"
             )
-        logger.error(f"  finish_reason={exec_res}")
-        await _emit(shared, {"stage": _STAGE, "step": "mapping_agent", "status": "error", "error": err})
-        return _abort_on_max(shared, "mapping_agent", "error")
+
+        prev_entity_names = {e.entity for e in self._accumulated.entities} if self._accumulated else set()
+        prev_edge_names = {e.label for e in self._accumulated.edges} if self._accumulated else set()
+        self._accumulated = _merge_mapping(self._accumulated, delta)
+        curr_entity_names = {e.entity for e in self._accumulated.entities}
+        curr_edge_names = {e.label for e in self._accumulated.edges}
+
+        added_entities = curr_entity_names - prev_entity_names
+        added_edges = curr_edge_names - prev_edge_names
+        parts = [f"+{','.join(sorted(added_entities))}"] if added_entities else []
+        if added_edges:
+            parts.append(f"edges: +{','.join(sorted(added_edges))}")
+        print(f"  emit {', '.join(parts)} ({len(curr_entity_names)}E/{len(curr_edge_names)}R)")
+
+        if self._schema is not None:
+            v = MappingValidator(self._schema, self._accumulated, self._model)
+            errors = v.validate(incremental=True)
+            if errors:
+                print(f"  {len(errors)} validation issue(s)")
+                lines = "\n".join(f"- {e}" for e in errors[:10])
+                return ToolResult.success_response(
+                    tool_call.id, self.name,
+                    f"Merged ({len(curr_entity_names)} entities, {len(curr_edge_names)} edges).\n"
+                    f"Validation issues:\n{lines}\n\n"
+                    f"Fix and call emit_data_mapping again."
+                )
+
+        return ToolResult.success_response(
+            tool_call.id, self.name,
+            f"Merged ({len(curr_entity_names)} entities, {len(curr_edge_names)} edges)."
+        )
+
+
+class ReadMappingTool(BaseTool):
+    """Returns the current accumulated mapping as JSON."""
+
+    permission: str = "agent"
+    name: str = "read_mapping"
+    description: str = "Read the current accumulated mapping."
+    strict: bool = False
+    parameters: dict = {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+        "required": [],
+    }
+
+    _emit_tool: EmitDataMappingTool = PrivateAttr()
+
+    def __init__(self, emit_tool: EmitDataMappingTool, **kwargs):
+        super().__init__(**kwargs)
+        self._emit_tool = emit_tool
+
+    async def execute(self, tool_call: ToolCall, **kwargs) -> ToolResult:
+        mapping = self._emit_tool.accumulated
+        ents = len(mapping.entities) if mapping else 0
+        edges = len(mapping.edges) if mapping else 0
+        print(f"  read mapping ({ents} entities, {edges} edges)")
+        if mapping is None:
+            return ToolResult.success_response(tool_call.id, self.name, "{}")
+        return ToolResult.success_response(
+            tool_call.id, self.name, mapping.model_dump_json(indent=2)
+        )
+
+
+class DeleteMappingPathTool(BaseTool):
+    """Deletes a JSON path from the accumulated mapping."""
+
+    permission: str = "agent"
+    name: str = "delete_mapping_path"
+    description: str = (
+        "Delete entities or edges from the current mapping by JSON path. "
+        "Examples: 'entities[0]' removes the first entity, "
+        "'edges[label=bad_edge]' removes edge with label 'bad_edge'."
+    )
+    strict: bool = False
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "JSON path to delete"},
+        },
+        "required": ["path"],
+    }
+
+    _emit_tool: EmitDataMappingTool = PrivateAttr()
+
+    def __init__(self, emit_tool: EmitDataMappingTool, **kwargs):
+        super().__init__(**kwargs)
+        self._emit_tool = emit_tool
+
+    async def execute(self, tool_call: ToolCall, **kwargs) -> ToolResult:
+        path = tool_call.function.arguments_dict.get("path", "").strip()
+        mapping = self._emit_tool.accumulated
+        if mapping is None:
+            return ToolResult.failure_response(tool_call.id, self.name, "No mapping yet")
+
+        if path.startswith("entities["):
+            idx = self._parse_index(path, "entities")
+            if idx is not None and 0 <= idx < len(mapping.entities):
+                removed = mapping.entities.pop(idx)
+                print(f"  removed entity '{removed.entity}'")
+                return ToolResult.success_response(
+                    tool_call.id, self.name,
+                    f"Removed entity '{removed.entity}'"
+                )
+        elif path.startswith("edges[label="):
+            label = path[len("edges[label="):].rstrip("]")
+            for i, e in enumerate(mapping.edges):
+                if e.label == label:
+                    mapping.edges.pop(i)
+                    print(f"  removed edge '{label}'")
+                    return ToolResult.success_response(
+                        tool_call.id, self.name, f"Removed edge '{label}'"
+                    )
+        return ToolResult.failure_response(
+            tool_call.id, self.name, f"Cannot resolve path: {path}"
+        )
+
+    @staticmethod
+    def _parse_index(path: str, key: str) -> int | None:
+        try:
+            inner = path[len(f"{key}["):].split("]")[0]
+            return int(inner)
+        except (ValueError, IndexError):
+            return None
+
+
+def _mapping_result(mapping: DataMapping) -> dict:
+    return {
+        "entities": [
+            {"name": e.entity, "table": _ns_table(e.node_source),
+             "key_columns": _ns_key_cols(e.node_source), "properties": e.properties}
+            for e in mapping.entities
+        ],
+        "edges": [
+            {"label": e.label, "from": e.from_.entity, "to": e.to.entity,
+             "table": _edge_table(mapping, e), "fk_column": e.to.key_column}
+            for e in mapping.edges
+        ]}
 
 
 class SchemaValidatorNode(_EntityFlowNode):

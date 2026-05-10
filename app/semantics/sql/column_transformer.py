@@ -75,9 +75,11 @@ class ColumnTransformer:
             if outer_ref.is_metric:
                 col.set("this", exp.to_identifier(alias))
                 return
-            col.set("this", exp.to_identifier(
-                outer_ref.physical_expr.split('.')[-1] if '.' in outer_ref.physical_expr else outer_ref.physical_expr
-            ))
+            col_name = outer_ref.physical_expr
+            parsed = sqlglot.parse_one(col_name, dialect=None)
+            if isinstance(parsed, exp.Column):
+                col_name = parsed.name
+            col.set("this", exp.to_identifier(col_name))
             return
 
         if self._parser.is_dimension(alias):

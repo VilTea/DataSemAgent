@@ -209,9 +209,8 @@ class SQLTranslator:
                         mapping = self._parser.resolve_field(field_name)
                         physical_expr = mapping.physical_expression
                         
-                        if any(op in physical_expr for op in ['+', '-', '*', '/']):
-                            parsed_expr = sqlglot.parse_one(physical_expr, dialect=None)
-                            
+                        parsed_expr = sqlglot.parse_one(physical_expr, dialect=None)
+                        if not isinstance(parsed_expr, exp.Column):
                             table_ref = self._expander.get_table_reference(item, ctx)
                             if not table_ref:
                                 table_ref = self._scope_mgr.get_current_source(ctx)
