@@ -55,8 +55,8 @@ LLM-driven pipeline turns every database row into a graph node and every foreign
                             └──────────┘
 ```
 
-**🔁 Pipeline:** Sampler → Schema Agent → Validator → Mapping Agent → Validator → Compiler
-Auto-retries on failure with structured feedback to the LLM.
+**🔁 Pipeline:** Sampler → Schema Agent → Validator → Mapping Agent (incremental React loop) → Validator → Compiler  
+Mapping builds step by step with inline validation on each call. Auto-retries on failure.
 
 ### 🌳 Metric Lineage
 
@@ -91,6 +91,19 @@ uv run python run.py --lang zh
 | `[1]` **init** | Build entity graph & metric lineage |
 | `[2]` **ask** | Multi-turn agent Q&A |
 | `[3]` **exit** | Quit |
+| `[9]` **build-db** | Generate test database from OSI model |
+
+### Build Test Database
+
+Build a SQLite database from the OSI semantic model for development and testing:
+
+```bash
+# Via CLI menu: select [9] build-db (shows model/DB path confirmation)
+# Or directly:
+uv run python tests/build_tpcds_test_data.py --db data/test.db
+```
+
+Creates physical tables and populates them with realistic sample data — 3 years of dates, 10 customers/items, 5 stores, 500 transactions.
 
 ---
 
