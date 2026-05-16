@@ -13,7 +13,7 @@ from app.semantics.models import OSISpecification
 
 @pytest.fixture
 def tpcds_model():
-    spec = OSISpecification.load_from_yaml("tests/tpcds_model_sqlite.yaml")
+    spec = OSISpecification.load_from_yaml("config/semantics/tpcds_model_sqlite.yaml")
     return spec.semantic_model[0]
 
 
