@@ -17,18 +17,16 @@ from app.semantics.models import SemanticModel
 if TYPE_CHECKING:
     from app.pipeline.abc import EventConsumer
 
-_METRIC_GRAPH_PATH = str(PROJECT_ROOT / "data" / "metric_graph")
-
-
 async def init_all_graphs(
     model: SemanticModel,
     executor=None,
-    graph_db_config_key: str = "default",
+    graph_db_config_key: str = "entity",
     entity_consumers: list[EventConsumer] | None = None,
 ) -> None:
     """Build all graph pipelines and mark them ready.
 
     Skips graphs that already exist on disk (from a prior session).
+    Only opens each graph database once — no duplicate connections.
 
     Args:
         model: The OSI SemanticModel.
@@ -39,35 +37,20 @@ async def init_all_graphs(
     await _detect_or_init_metric_graph(model)
 
     if executor is not None:
-        from app.semantics.graph.loader import create_graph_loader
-        loader = create_graph_loader(graph_db_config_key)
-        await _detect_or_init_entity_graph(model, executor, loader=loader,
+        await _detect_or_init_entity_graph(model, executor,
+                                           graph_db_config_key=graph_db_config_key,
                                            consumers=entity_consumers)
 
 
 # ------------------------------------------------------------------ #
-#  detection helpers
-# ------------------------------------------------------------------ #
-
-def _graph_has_data(path: str) -> bool:
-    """True if *path* is a Kùzu database directory that contains node tables."""
-    import kuzu
-    p = Path(path).resolve()
-    if not p.is_dir() or not any(p.iterdir()):
-        return False
+def _executor_has_data(executor) -> bool:
+    """True if *executor* already contains node tables (protocol-compliant)."""
     try:
-        db = kuzu.Database(str(p))
-        conn = kuzu.Connection(db)
-        try:
-            r = conn.execute("CALL show_tables() RETURN *")
-            while r.has_next():
-                row = r.get_next()
-                if row[2] == "NODE":
-                    return True
-            return False
-        finally:
-            conn.close()
-            db.close()
+        result = executor.execute("CALL show_tables() RETURN *")
+        while result.has_next():
+            if result.get_next()[2] == "NODE":
+                return True
+        return False
     except Exception:
         return False
 
@@ -77,19 +60,20 @@ def _graph_has_data(path: str) -> bool:
 # ------------------------------------------------------------------ #
 
 async def _detect_or_init_metric_graph(model: SemanticModel) -> None:
-    from app.semantics.graph.loader import KuzuLoader
+    from app.semantics.graph.loader import create_graph_loader
 
-    path = _METRIC_GRAPH_PATH
-    if _graph_has_data(path):
-        logger.info(f"Metric graph found on disk ({path}), reusing")
-        loader = KuzuLoader(path=path)
+    if init_state.is_ready("metric_graph"):
+        return
+
+    loader = create_graph_loader("metric")
+    if _executor_has_data(loader):
+        logger.info("Metric graph found on disk, reusing")
         init_state.set_executor("metric_graph", loader)
         init_state.mark_ready("metric_graph")
         return
 
     from app.semantics.graph.metric.pipeline import build_metric_graph
 
-    loader = KuzuLoader(path=path)
     await build_metric_graph(model, loader=loader)
     init_state.set_executor("metric_graph", loader)
     init_state.mark_ready("metric_graph")
@@ -103,11 +87,19 @@ async def _detect_or_init_entity_graph(
     model: SemanticModel,
     executor,
     loader=None,
+    graph_db_config_key: str = "entity",
     consumers=None,
 ) -> None:
-    path = loader._path if loader is not None else "data/entity_graph"
-    if _graph_has_data(path):
-        logger.info(f"Entity graph found on disk ({path}), reusing")
+    from app.semantics.graph.loader import create_graph_loader
+
+    if init_state.is_ready("entity_graph"):
+        return
+
+    if loader is None:
+        loader = create_graph_loader(graph_db_config_key)
+
+    if _executor_has_data(loader):
+        logger.info("Entity graph found on disk, reusing")
         init_state.set_executor("entity_graph", loader)
         init_state.mark_ready("entity_graph")
         return

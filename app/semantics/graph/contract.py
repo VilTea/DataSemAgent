@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class GraphNode(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     id: str = Field(..., description="Unique node ID, e.g. 'metric:total_sales'")
     label: str = Field(..., description="Node label, e.g. 'Metric', 'Dimension'")
     properties: dict[str, Any] = Field(
@@ -43,12 +45,20 @@ class GraphDocument(BaseModel):
     def node_ids(self) -> set[str]:
         return {n.id for n in self.nodes}
 
-    def add_node(self, id: str, label: str, **properties) -> GraphNode:
-        node = GraphNode(id=id, label=label, properties=properties)
+    def add_node(self, id_or_node: str | GraphNode, label: str | None = None, **properties) -> GraphNode:
+        if isinstance(id_or_node, GraphNode):
+            node = id_or_node
+        else:
+            node = GraphNode(id=id_or_node, label=label, properties=properties)
         self.nodes.append(node)
         return node
 
-    def add_edge(self, from_id: str, to_id: str, label: str, **properties) -> GraphEdge:
-        edge = GraphEdge(from_=from_id, to=to_id, label=label, properties=properties)
+    def add_edge(
+        self, from_or_edge: str | GraphEdge, to_id: str | None = None, label: str | None = None, **properties
+    ) -> GraphEdge:
+        if isinstance(from_or_edge, GraphEdge):
+            edge = from_or_edge
+        else:
+            edge = GraphEdge(from_=from_or_edge, to=to_id, label=label, properties=properties)
         self.edges.append(edge)
         return edge

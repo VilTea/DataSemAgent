@@ -121,16 +121,31 @@ class KuzuExecutor:
                 f"CREATE NODE TABLE {label} ({', '.join(cols)}, PRIMARY KEY(id))"
             )
         edge_rels: dict[str, set[tuple[str, str]]] = {}
+        edge_props: dict[str, dict[str, type]] = {}
         for e in doc.edges:
             rels = edge_rels.setdefault(e.label, set())
             from_node = next((n for n in doc.nodes if n.id == e.from_), None)
             to_node = next((n for n in doc.nodes if n.id == e.to), None)
             if from_node and to_node:
                 rels.add((from_node.label, to_node.label))
+            # Collect edge property types
+            for k, v in e.properties.items():
+                if v is None:
+                    continue
+                vt = type(v)
+                ep = edge_props.setdefault(e.label, {})
+                existing = ep.get(k)
+                if existing is str:
+                    continue
+                if existing is None or (existing is int and vt is float):
+                    ep[k] = vt
         for label, pairs in edge_rels.items():
             for i, (from_lbl, to_lbl) in enumerate(pairs):
                 if i == 0:
-                    self._conn.execute(f"CREATE REL TABLE {label} (FROM {from_lbl} TO {to_lbl})")
+                    cols = [f"FROM {from_lbl} TO {to_lbl}"]
+                    for k, t in sorted(edge_props.get(label, {}).items()):
+                        cols.append(f"{k} {self._python_to_kuzu_type(t)}")
+                    self._conn.execute(f"CREATE REL TABLE {label} ({', '.join(cols)})")
 
     @staticmethod
     def _python_to_kuzu_type(t: type) -> str:
@@ -163,10 +178,22 @@ class KuzuExecutor:
 
     def _insert_edges(self, doc: GraphDocument) -> None:
         for edge in doc.edges:
+            if edge.properties:
+                prop_strs = []
+                for k, v in edge.properties.items():
+                    if isinstance(v, str):
+                        prop_strs.append(f"{k}: '{self._esc(v)}'")
+                    elif isinstance(v, bool):
+                        prop_strs.append(f"{k}: {str(v).lower()}")
+                    else:
+                        prop_strs.append(f"{k}: {v}")
+                prop_clause = " {" + ", ".join(prop_strs) + "}"
+            else:
+                prop_clause = ""
             self._conn.execute(
                 f"MATCH (a), (b) "
                 f"WHERE a.id = '{self._esc(edge.from_)}' AND b.id = '{self._esc(edge.to)}' "
-                f"CREATE (a)-[:{edge.label}]->(b)"
+                f"CREATE (a)-[:{edge.label}{prop_clause}]->(b)"
             )
 
     @staticmethod
@@ -174,7 +201,7 @@ class KuzuExecutor:
         return val.replace("\\", "\\\\").replace("'", "\\'")
 
 
-def create_graph_executor(db_config_key: str = "default") -> GraphExecutor:
+def create_graph_executor(db_config_key: str = "entity") -> GraphExecutor:
     db_cfg: GraphDatabaseSettings = config.graph_database[db_config_key]
     if db_cfg.type == GraphDatabaseType.KUZU and db_cfg.driver == "kuzu":
         return KuzuExecutor(path=str(db_cfg.specific.path))

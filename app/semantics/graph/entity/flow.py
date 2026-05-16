@@ -156,8 +156,8 @@ async def init_entity_graph(
     from app.pipeline import QueuePipeline
 
     if loader is None:
-        from app.semantics.graph.loader import KuzuLoader
-        loader = KuzuLoader()
+        from app.semantics.graph.loader import create_graph_loader
+        loader = create_graph_loader("entity")
 
     from app.semantics.graph.init_state import init_state
     init_state.set_executor("entity_graph", loader)
