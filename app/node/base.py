@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from abc import ABC, abstractmethod
 from typing import Any, TYPE_CHECKING, TypeVar
 
@@ -21,7 +20,6 @@ _SINGLETON_KEY =  "__agent_context_singleton__"
 class AgentContext(BaseModel):
     shared: dict[str, Any] = Field(default_factory=dict, description="Shared flow message bus")
 
-    channel: asyncio.Queue = Field(default_factory=asyncio.Queue)
     memory: Memory = Field(default_factory=Memory)
     tools: list[BaseTool] = Field(default_factory=list)
     turns: int = Field(default=0)
@@ -43,15 +41,8 @@ class AgentContext(BaseModel):
         return self.shared
 
     async def publish(self, event: Any) -> None:
-        """Publish an event.
-
-        When a pipeline is set, dispatches to all registered consumers.
-        Otherwise falls back to writing to ``channel`` for direct access.
-        """
         if self._pipeline is not None:
             await self._pipeline.emit(event)
-        else:
-            await self.channel.put(event)
 
 
 class BaseAgentNode(BaseModel, AsyncNode, ABC):

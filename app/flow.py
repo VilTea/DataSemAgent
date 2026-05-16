@@ -19,10 +19,6 @@ class AgentFlow(AsyncFlow):
         self.context: AgentContext = AgentContext()
         self._pipeline = pipeline
 
-    @property
-    def channel(self):
-        return self.context.channel
-
     async def ask(self, prompt: str, context: AgentContext = None):
         if context:
             self.context = context
