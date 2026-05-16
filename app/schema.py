@@ -118,6 +118,7 @@ class Message(BaseModel):
     tool_calls: list[ToolCall] | None = Field(default=None)
     name: str | None  = Field(default=None)
     tool_call_id: str | None  = Field(default=None)
+    injected: bool = Field(default=False, description="System-injected (skip in round counting)")
 
     def __add__(self, other) -> list["Message"]:
         """支持 Message + list 或 Message + Message 的操作"""
@@ -214,7 +215,7 @@ class Message(BaseModel):
 
 class Memory(BaseModel):
     messages: list[Message] = Field(default_factory=list)
-    max_messages: int = Field(default=100)
+    max_messages: int = Field(default=300)
 
     def upsert_message(self, message: Message, index: int, role: ROLE_TYPE = None) -> None:
         if self.messages:
@@ -233,16 +234,24 @@ class Memory(BaseModel):
     def add_message(self, message: Message) -> None:
         """Add a message to memory"""
         self.messages.append(message)
-        # Optional: Implement message limit
-        if len(self.messages) > self.max_messages:
-            self.messages = self.messages[-self.max_messages :]
+        self._truncate()
 
     def add_messages(self, messages: list[Message]) -> None:
         """Add multiple messages to memory"""
         self.messages.extend(messages)
-        # Optional: Implement message limit
-        if len(self.messages) > self.max_messages:
-            self.messages = self.messages[-self.max_messages :]
+        self._truncate()
+
+    def _truncate(self) -> None:
+        """Trim to max_messages, ensuring tool messages don't become orphans."""
+        if len(self.messages) <= self.max_messages:
+            return
+        cut = len(self.messages) - self.max_messages
+        # Never cut between assistant(tool_calls) and its tool(result):
+        # if the first kept message is a tool result, extend the cut
+        # backwards to include the assistant that emitted the tool_calls.
+        while cut > 0 and self.messages[cut].role == Role.TOOL:
+            cut -= 1
+        self.messages = self.messages[cut:]
 
     def clear(self) -> None:
         """Clear all messages"""

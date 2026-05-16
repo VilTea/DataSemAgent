@@ -43,6 +43,7 @@ class AgentFlow(AsyncFlow):
         finally:
             if self._pipeline is not None:
                 await self._pipeline.stop()
+            self.context.turns += 1
             await self.context.hooks.emit(HookPoint.FLOW_END, ctx=self.context)
 
 
