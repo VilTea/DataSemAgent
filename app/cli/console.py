@@ -69,9 +69,8 @@ class RichConsumer(EventConsumer):
 
         # --- finish ---
         if event.finish_reason and event.finish_reason != FinishReason.NONE:
-            self._console.print()
+            self._console.print("\n")  # force flush buffered inline content
             self._console.print(Rule(style="dim"))
-            self._console.file.flush()
 
     # ------------------------------------------------------------------ #
     #  Message (TOOL result) — distinct block
