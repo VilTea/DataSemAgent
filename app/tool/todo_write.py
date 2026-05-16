@@ -1,7 +1,7 @@
 """TodoWrite tool — full-replacement task list with state machine enforcement."""
 from __future__ import annotations
 
-from pydantic import BaseModel, PrivateAttr
+from pydantic import BaseModel, PrivateAttr, model_validator
 
 from app.hook import HookPoint, hook
 from app.schema import ToolCall
@@ -16,6 +16,21 @@ class TodoItem(BaseModel):
 
 class TodoParams(BaseModel):
     todos: list[TodoItem]
+
+    @model_validator(mode="after")
+    def _validate_constraints(self) -> "TodoParams":
+        in_progress_ids = [t.id for t in self.todos if t.status == "in_progress"]
+        if len(in_progress_ids) > 1:
+            ids = ", ".join(in_progress_ids)
+            raise ValueError(f"Only ONE task may be in_progress. Got {len(in_progress_ids)}: {ids}")
+
+        seen: set[str] = set()
+        for t in self.todos:
+            if t.id in seen:
+                raise ValueError(f"Duplicate task id: {t.id}")
+            seen.add(t.id)
+
+        return self
 
 
 class TodoWriteTool(BaseTool):
@@ -78,14 +93,6 @@ class TodoWriteTool(BaseTool):
             params = TodoParams.model_validate(tool_call.function.arguments_dict)
         except Exception as e:
             return ToolResult.failure_response(tool_call.id, self.name, f"Invalid: {e}")
-        has_in_progress = False
-        for ti in params.todos:
-            if ti.status == "in_progress":
-                if has_in_progress:
-                    ti.status = "pending"
-                has_in_progress = True
-            if ti.status not in ("pending", "in_progress", "completed"):
-                ti.status = "pending"
         self._items = params.todos
         self._turns_since_last_call = 0
         lines = [f"- [{i.status}] {i.content}" for i in self._items]
