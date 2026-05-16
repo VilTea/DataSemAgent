@@ -1,6 +1,20 @@
-[default]
+[entity]
 type = "kuzu"
 driver = "kuzu"
 
-[default.specific]
+[entity.specific]
 path = "data/entity_graph"
+
+[metric]
+type = "kuzu"
+driver = "kuzu"
+
+[metric.specific]
+path = "data/metric_graph"
+
+[reasoning]
+type = "kuzu"
+driver = "kuzu"
+
+[reasoning.specific]
+path = "data/reasoning_graph"

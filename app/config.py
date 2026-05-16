@@ -103,6 +103,16 @@ class MCPSettings(BaseModel):
         if tp in ["python-module", "node-module"] and not self.module_path:
             raise ValueError(f"{tp} requires module_path")
 
+@register_config
+class AgentSettings(BaseModel):
+    reflection_interval: int = Field(default=10, ge=1, description="Trigger reasoning reflection every N turns")
+
+    setting_name: ClassVar[str] = "agent"
+    base_path: ClassVar[Path] = PROJECT_ROOT / "config" / "agent.toml"
+    file_type: ClassVar[tuple[str]] = ("toml",)
+    load_priority: ClassVar[int] = 30
+
+
 """ Database """
 
 class GraphDatabaseType(str, Enum):
