@@ -115,7 +115,7 @@ class KuzuExecutor:
                     props[k] = vt
         for label, prop_types in node_props.items():
             cols = ["id STRING"] + [
-                f"{k} {self._python_to_kuzu_type(t)}" for k, t in sorted(prop_types.items())
+                f"`{k}` {self._python_to_kuzu_type(t)}" for k, t in sorted(prop_types.items())
             ]
             self._conn.execute(
                 f"CREATE NODE TABLE {label} ({', '.join(cols)}, PRIMARY KEY(id))"
@@ -144,7 +144,7 @@ class KuzuExecutor:
                 if i == 0:
                     cols = [f"FROM {from_lbl} TO {to_lbl}"]
                     for k, t in sorted(edge_props.get(label, {}).items()):
-                        cols.append(f"{k} {self._python_to_kuzu_type(t)}")
+                        cols.append(f"`{k}` {self._python_to_kuzu_type(t)}")
                     self._conn.execute(f"CREATE REL TABLE {label} ({', '.join(cols)})")
 
     @staticmethod
@@ -161,19 +161,19 @@ class KuzuExecutor:
 
     def _insert_nodes(self, doc: GraphDocument) -> None:
         for node in doc.nodes:
-            fields = [f"id: '{self._esc(node.id)}'"]
+            fields = [f"`id`: '{self._esc(node.id)}'"]
             for k, v in node.properties.items():
                 if k == "id":
                     continue
                 if isinstance(v, str):
-                    fields.append(f"{k}: '{self._esc(v)}'")
+                    fields.append(f"`{k}`: '{self._esc(v)}'")
                 elif isinstance(v, bool):
-                    fields.append(f"{k}: {str(v).lower()}")
+                    fields.append(f"`{k}`: {str(v).lower()}")
                 elif isinstance(v, list):
                     items = ", ".join(f"'{self._esc(x)}'" if isinstance(x, str) else str(x) for x in v)
-                    fields.append(f"{k}: [{items}]")
+                    fields.append(f"`{k}`: [{items}]")
                 else:
-                    fields.append(f"{k}: {v}")
+                    fields.append(f"`{k}`: {v}")
             self._conn.execute(f"CREATE (:{node.label} {{{', '.join(fields)}}})")
 
     def _insert_edges(self, doc: GraphDocument) -> None:
@@ -182,7 +182,7 @@ class KuzuExecutor:
                 prop_strs = []
                 for k, v in edge.properties.items():
                     if isinstance(v, str):
-                        prop_strs.append(f"{k}: '{self._esc(v)}'")
+                        prop_strs.append(f"`{k}`: '{self._esc(v)}'")
                     elif isinstance(v, bool):
                         prop_strs.append(f"{k}: {str(v).lower()}")
                     else:
@@ -192,7 +192,7 @@ class KuzuExecutor:
                 prop_clause = ""
             self._conn.execute(
                 f"MATCH (a), (b) "
-                f"WHERE a.id = '{self._esc(edge.from_)}' AND b.id = '{self._esc(edge.to)}' "
+                f"WHERE a.`id` = '{self._esc(edge.from_)}' AND b.`id` = '{self._esc(edge.to)}' "
                 f"CREATE (a)-[:{edge.label}{prop_clause}]->(b)"
             )
 
