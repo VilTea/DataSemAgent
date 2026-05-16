@@ -29,6 +29,7 @@ class SQLTranslator:
     def __init__(self, parser: OSIModelParser, strict: bool = True):
         self._parser = parser
         self._strict = strict
+        self._known_datasets = {ds.name for ds in parser._model.datasets}
         self._scope_mgr = ScopeManager(parser)
         self._classifier = FieldClassifier(parser, strict=strict)
         self._col_transformer = ColumnTransformer(parser, self._scope_mgr, self._classifier)
@@ -200,7 +201,19 @@ class SQLTranslator:
                 physical_str = new_expr.sql() if hasattr(new_expr, 'sql') else str(new_expr)
                 new_expr.set("alias", alias)
             else:
-                if hasattr(item, 'this') and isinstance(item.this, exp.Column):
+                # CTE / subquery alias columns — pass through without OSI resolution.
+                # Dataset aliases (like 'o' for 'orders') map to known physical sources;
+                # true CTE/subquery aliases map to themselves or unknown values.
+                if (isinstance(item, exp.Column) and item.table
+                        and item.table in ctx.table_alias_map
+                        and item.table not in self._known_datasets
+                        and (ctx.table_alias_map[item.table] == item.table
+                             or ctx.table_alias_map[item.table] not in
+                             {ds.source for ds in self._parser._model.datasets})):
+                    self._clause_transformer.transform_expression(item, ctx)
+                    physical_str = item.sql() if hasattr(item, 'sql') else str(item)
+                    new_expr = item
+                elif hasattr(item, 'this') and isinstance(item.this, exp.Column):
                     new_expr = self._clause_transformer.transform_function(item, alias, ctx)
                     physical_str = new_expr.sql() if hasattr(new_expr, 'sql') else str(new_expr)
                 else:
@@ -228,6 +241,23 @@ class SQLTranslator:
                             physical_str = item.sql() if hasattr(item, 'sql') else str(item)
                             new_expr = item
                     except FieldNotFoundError:
+                        if self._strict:
+                            plain_col = (isinstance(item, exp.Column)
+                                         or (isinstance(item, exp.Alias)
+                                             and isinstance(item.this, exp.Column)))
+                            known_sources = {ds.source for ds in self._parser._model.datasets}
+                            in_cte_scope = any(
+                                a not in self._known_datasets and a not in known_sources
+                                for a in ctx.table_alias_map
+                            )
+                            if plain_col and not in_cte_scope:
+                                if field_name in self._parser.list_metrics():
+                                    from app.semantics.sql.exceptions import MetricNotFoundError
+                                    raise MetricNotFoundError(field_name)
+                                raise
+                        self._clause_transformer.transform_expression(item, ctx)
+                        physical_str = item.sql() if hasattr(item, 'sql') else str(item)
+                        new_expr = item
                         self._clause_transformer.transform_expression(item, ctx)
                         physical_str = item.sql() if hasattr(item, 'sql') else str(item)
                         new_expr = item

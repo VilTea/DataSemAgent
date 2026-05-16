@@ -86,6 +86,11 @@ class MetricGroupByRule(Rule):
         if not has_metric:
             return []
 
+        # If all metric references are through subquery/CTE aliases, aggregation
+        # already happened in the subquery — no GROUP BY needed.
+        if validator._all_metrics_from_subquery(select, scope):
+            return []
+
         group_cols = validator.get_group_by_columns(select, alias_map)
         missing = selected_dims - group_cols
         if missing:
@@ -104,19 +109,26 @@ class CrossDatasetMetricRule(Rule):
 
     def check(self, select: exp.Select, scope: Scope, validator: "SQLValidator") -> list[str]:
         from_tables = validator._collect_from_tables(scope)
-        used_metrics = validator._find_metrics_in_select(select)
         errors = []
 
-        for metric_name in used_metrics:
-            required_tables = validator.get_metric_tables(metric_name)
-            if not required_tables:
-                continue
-            missing = required_tables - from_tables
-            if missing:
-                missing_str = ", ".join(sorted(missing))
-                errors.append(
-                    self._error(f"指标 {metric_name} 需要表 [{missing_str}]，但它们不在当前作用域的 FROM/JOIN 中")
-                )
+        for item in select.expressions:
+            for col in item.walk(bfs=False):
+                if not isinstance(col, exp.Column) or not validator.is_metric(col.name):
+                    continue
+                # Metric accessed through a subquery/CTE alias (e.g. curr.total_profit)
+                # — the subquery already handles the metric's table dependencies.
+                if col.table and validator._is_scope_source(scope, col.table):
+                    continue
+                metric_name = col.name
+                required_tables = validator.get_metric_tables(metric_name)
+                if not required_tables:
+                    continue
+                missing = required_tables - from_tables
+                if missing:
+                    missing_str = ", ".join(sorted(missing))
+                    errors.append(
+                        self._error(f"指标 {metric_name} 需要表 [{missing_str}]，但它们不在当前作用域的 FROM/JOIN 中")
+                    )
         return errors
 
 
@@ -257,6 +269,12 @@ class SQLValidator:
         return self._metric_tables.get(metric_name, set())
 
     @staticmethod
+    def _is_scope_source(scope: Scope, alias: str) -> bool:
+        """True if *alias* in scope.sources is a subquery/CTE (Scope), not a base table."""
+        source = scope.sources.get(alias)
+        return isinstance(source, Scope)
+
+    @staticmethod
     def _collect_from_tables(scope: Scope) -> set[str]:
         """收集当前作用域 FROM/JOIN 中的逻辑表名"""
         tables = set()
@@ -340,6 +358,17 @@ class SQLValidator:
                         cols.add(item.alias or item.this.name)
 
         return cols
+
+    def _all_metrics_from_subquery(self, select: exp.Select, scope: Scope) -> bool:
+        """True if every metric in the SELECT is accessed through a subquery/CTE alias."""
+        metrics_found = False
+        for item in select.expressions:
+            for col in item.walk(bfs=False):
+                if isinstance(col, exp.Column) and self.is_metric(col.name):
+                    metrics_found = True
+                    if not col.table or not self._is_scope_source(scope, col.table):
+                        return False
+        return metrics_found
 
     def _find_metrics_in_select(self, select: exp.Select) -> set[str]:
         """找出 SELECT 列表中使用的指标名"""

@@ -52,7 +52,16 @@ class ColumnTransformer:
                 if is_dimension_field:
                     try:
                         mapping = self._parser.resolve_field(alias)
-                        col.set("this", exp.to_identifier(mapping.physical_expression))
+                        pexpr = mapping.physical_expression
+                        if pexpr != alias:
+                            parsed = sqlglot.parse_one(pexpr, dialect=None)
+                            ref = col.table or table_alias
+                            for inner_col in parsed.find_all(exp.Column):
+                                if ref and not inner_col.table:
+                                    inner_col.set("table", ref)
+                            self._replace_column_with_expression(col, parsed)
+                        else:
+                            col.set("this", exp.to_identifier(pexpr))
                     except FieldNotFoundError:
                         pass
                     if not is_outer_ref and is_logical_name:
@@ -61,7 +70,16 @@ class ColumnTransformer:
                 elif is_metric_field:
                     try:
                         mapping = self._parser.resolve_field(alias)
-                        col.set("this", exp.to_identifier(mapping.physical_expression))
+                        pexpr = mapping.physical_expression
+                        if pexpr != alias:
+                            parsed = sqlglot.parse_one(pexpr, dialect=None)
+                            ref = col.table or table_alias
+                            for inner_col in parsed.find_all(exp.Column):
+                                if ref and not inner_col.table:
+                                    inner_col.set("table", ref)
+                            self._replace_column_with_expression(col, parsed)
+                        else:
+                            col.set("this", exp.to_identifier(pexpr))
                     except FieldNotFoundError:
                         pass
 
@@ -87,13 +105,37 @@ class ColumnTransformer:
                 mapping = self._parser.resolve_field(alias)
                 physical_col = mapping.physical_expression
                 table_ref = None
-                if mapping.dataset_name:
+                if col.table and self._is_scoped_alias(col.table, ctx):
+                    table_ref = col.table
+                elif mapping.dataset_name:
                     table_ref = ctx.get_table_alias(mapping.dataset_name)
+                    # Prefer SQL alias (e.g. 'ss') over physical table name
+                    scope_alias = self._scope_alias_for(ctx, mapping.dataset_name)
+                    if scope_alias:
+                        table_ref = scope_alias
+                    if not table_ref:
+                        # If the current source's dataset also defines this field,
+                        # prefer it (handles duplicate field names across datasets).
+                        # Otherwise use the field's actual dataset source — BUT only
+                        # when the current source is a base table (not a CTE/subquery).
+                        if not self._current_source_has_field_for(ctx, alias):
+                            if not self._is_current_source_cte(ctx):
+                                try:
+                                    table_ref = self._parser.get_dataset_source(mapping.dataset_name)
+                                except Exception:
+                                    pass
                 if not table_ref:
                     table_ref = ctx.get_current_table()
-                if table_ref:
-                    col.set("table", table_ref)
-                col.set("this", exp.to_identifier(physical_col))
+                if physical_col != alias:
+                    parsed = sqlglot.parse_one(physical_col, dialect=None)
+                    for inner_col in parsed.find_all(exp.Column):
+                        if table_ref and not inner_col.table:
+                            inner_col.set("table", table_ref)
+                    self._replace_column_with_expression(col, parsed)
+                else:
+                    if table_ref:
+                        col.set("table", table_ref)
+                    col.set("this", exp.to_identifier(physical_col))
             except FieldNotFoundError:
                 pass
         elif not self._parser.is_metric(alias):
@@ -210,6 +252,43 @@ class ColumnTransformer:
                             return
                 elif isinstance(value, exp.Expression):
                     self._replace_in_node(value, target, replacement)
+
+    @staticmethod
+    def _is_scoped_alias(table: str, ctx) -> bool:
+        """True if *table* is a known alias (JOIN/CTE/subquery), not a bare dataset name."""
+        return table is not None and table in ctx.table_alias_map
+
+    def _is_current_source_cte(self, ctx) -> bool:
+        """True when the current source is a CTE / derived table, not a base dataset."""
+        current = ctx.get_current_source()
+        if not current:
+            return False
+        known_sources = {ds.source for ds in self._parser._model.datasets}
+        known_names = self._known_datasets
+        if current in known_sources or current in known_names:
+            return False
+        resolved = ctx.table_alias_map.get(current)
+        if resolved and (resolved in known_sources or resolved in known_names):
+            return False
+        for scope in ctx.scope_stack:
+            phys = scope.tables.get(current)
+            if phys and (phys in known_sources or phys in known_names):
+                return False
+        return True
+
+    def _current_source_has_field_for(self, ctx, field_name: str) -> bool:
+        """Return True if *field_name* is defined on the current source's dataset."""
+        current = ctx.get_current_source()
+        if not current:
+            return False
+        for ds in self._parser._model.datasets:
+            if ds.source == current or ds.name == current:
+                if ds.fields:
+                    for f in ds.fields:
+                        if f.name == field_name:
+                            return True
+                break
+        return False
 
     def _find_table_for_field(self, dataset_name: str | None, ctx) -> str | None:
         """Find the physical table alias for a given dataset name."""

@@ -70,14 +70,17 @@ class FieldClassifier:
 
         if isinstance(item, exp.Column) and item.table:
             if item.table not in self._known_datasets:
-                # Aliases defined in FROM/JOIN (e.g. 'dd' for date_dim) are
-                # not outer references — they are valid in-scope qualifiers.
-                in_scope = (
-                    item.table in ctx.table_alias_map
-                    or scope_mgr.is_table_in_current_scope(ctx, item.table)
-                )
-                if not in_scope:
-                    return "outer_ref", None
+                if item.table in ctx.table_alias_map:
+                    resolved = ctx.table_alias_map[item.table]
+                    known_sources = {ds.source for ds in self._parser._model.datasets}
+                    if resolved not in known_sources and resolved not in self._known_datasets:
+                        # True CTE/subquery alias — pass through, don't resolve as OSI field
+                        return "column", None
+                    # Dataset alias (e.g. 'c' for 'customer') — fall through to OSI checks
+                else:
+                    in_scope = scope_mgr.is_table_in_current_scope(ctx, item.table)
+                    if not in_scope:
+                        return "outer_ref", None
 
         if name and self._parser.is_metric(name):
             return "metric", None
@@ -110,10 +113,13 @@ class FieldClassifier:
                     return "metric", None
                 return "column", None
             except FieldNotFoundError:
-                if self._strict and name:
-                    if name in self._parser.list_metrics():
-                        raise MetricNotFoundError(name)
-                    raise
-                return "column", None
+                return "column", None  # let translator handle strict validation
 
         return "column", None
+
+    def _is_from_subquery_scope(self, ctx, scope_mgr) -> bool:
+        """True if the current scope contains CTE or derived table aliases."""
+        for alias in ctx.table_alias_map:
+            if alias not in self._known_datasets:
+                return True
+        return False

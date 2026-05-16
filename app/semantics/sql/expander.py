@@ -91,6 +91,23 @@ class FieldExpander:
             table_ref = self.get_table_reference(item, ctx)
             if not table_ref and mapping.dataset_name:
                 table_ref = ctx.get_table_alias(mapping.dataset_name)
+                # Prefer SQL alias (e.g. 'ss') over physical table name (e.g. 'store_sales')
+                scope_alias = self._col_transformer._scope_alias_for(ctx, mapping.dataset_name)
+                if scope_alias:
+                    table_ref = scope_alias
+                if not table_ref:
+                    # If the current source's dataset also defines this field, prefer the
+                    # current source (handles duplicate field names across datasets).
+                    # Otherwise use the field's actual dataset source — BUT only when
+                    # the current source is a base table.  When the current source is a
+                    # CTE / subquery the columns come from the derived table's output,
+                    # not from their original datasets, so we leave them unqualified.
+                    if not self._current_source_has_field(ctx, field_name):
+                        if not self._is_current_source_cte(ctx):
+                            try:
+                                table_ref = self._parser.get_dataset_source(mapping.dataset_name)
+                            except Exception:
+                                pass
             if not table_ref:
                 current = self._scope_mgr.get_current_source(ctx)
                 if current and current != 'cte':
@@ -163,6 +180,27 @@ class FieldExpander:
     # ------------------------------------------------------------------ #
     # Table reference helpers
     # ------------------------------------------------------------------ #
+
+    def _is_current_source_cte(self, ctx) -> bool:
+        """True when the current source is a CTE / derived table, not a base dataset."""
+        current = self._scope_mgr.get_current_source(ctx)
+        if not current:
+            return False
+        return self._is_cte_ref(current, ctx)
+
+    def _current_source_has_field(self, ctx, field_name: str) -> bool:
+        """Return True if *field_name* is defined on the current source's dataset."""
+        current = self._scope_mgr.get_current_source(ctx)
+        if not current:
+            return False
+        for ds in self._parser._model.datasets:
+            if ds.source == current or ds.name == current:
+                if ds.fields:
+                    for f in ds.fields:
+                        if f.name == field_name:
+                            return True
+                break
+        return False
 
     def get_table_reference(self, item, ctx) -> str | None:
         # Unwrap Aliases to reach the inner Column

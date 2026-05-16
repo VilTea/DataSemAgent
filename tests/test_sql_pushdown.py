@@ -160,6 +160,18 @@ class TestFieldClassification:
         result = translator.translate("SELECT order_id FROM orders")
         assert result.physical_sql == "SELECT stg_orders.order_id FROM stg_orders"
 
+    def test_dimension_with_join_alias(self):
+        """JOIN 别名 + 维度列：保留别名，不替换为 model dataset 表名"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT c.customer_id FROM orders JOIN customers c "
+            "ON orders.customer_id = c.customer_id"
+        )
+        assert "c.customer_id" in result.physical_sql
+
     def test_computed_field(self):
         """计算字段：映射到物理表达式"""
         model = create_test_semantic_model()
@@ -335,6 +347,54 @@ class TestCTEAliasPropagation:
             "ON cte.customer_id = customers.customer_id"
         )
         assert "stg_customers.state AS status" in result.physical_sql
+
+    def test_cte_computed_column_passthrough(self):
+        """CTE 内计算列不在 OSI 模型中，应透传"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "WITH cte AS ("
+            "  SELECT customer_id, total_amount * 0.1 AS fee "
+            "  FROM orders"
+            ") SELECT customer_id, fee FROM cte"
+        )
+        assert "stg_orders.total_amount * 0.1 AS fee" in result.physical_sql
+        assert "fee" in result.physical_sql
+
+    def test_cte_self_join_computed_columns(self):
+        """CTE 自 JOIN 引用计算列"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "WITH cte AS ("
+            "  SELECT customer_id, SUM(total_amount) AS total "
+            "  FROM orders GROUP BY customer_id"
+            ") SELECT a.customer_id, a.total, b.total "
+            "FROM cte a JOIN cte b ON a.customer_id = b.customer_id"
+        )
+        assert "SUM(stg_orders.total_amount) AS total" in result.physical_sql
+        assert "a.total" in result.physical_sql
+        assert "b.total" in result.physical_sql
+
+    def test_subquery_alias_dimension_passthrough(self):
+        """子查询别名 + 维度列应保留子查询别名，不展开为 model dataset"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT s.customer_id FROM ("
+            "  SELECT customer_id FROM orders"
+            ") s"
+        )
+        assert "s.customer_id" in result.physical_sql
+        # customer_id IS a dimension, but since it's from a subquery alias,
+        # it should NOT get a customer. table prefix or AS alias
+        assert "stg_orders.customer_id AS customer_id" in result.physical_sql
 
 
 # =============================================================================

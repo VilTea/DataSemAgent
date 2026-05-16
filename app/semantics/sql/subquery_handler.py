@@ -114,6 +114,8 @@ class SubqueryHandler:
             ctx.push_scope()
             self._on_transform_select(subquery, ctx)
             ctx.pop_scope()
+            if source.alias:
+                ctx.set_table_alias(source.alias, source.alias)
         elif isinstance(source, exp.Table):
             alias = source.alias or source.name
             if alias not in ctx.table_alias_map:
@@ -121,7 +123,7 @@ class SubqueryHandler:
                     physical = self._parser.get_dataset_source(source.name)
                     ctx.set_table_alias(alias, physical)
                 except DatasetNotFoundError:
-                    pass
+                    ctx.set_table_alias(alias, alias)
 
     # ------------------------------------------------------------------ #
     # Subquery transformation (scope isolation)
@@ -181,7 +183,13 @@ class SubqueryHandler:
             if isinstance(cte, exp.CTE):
                 cte_alias = cte.alias
                 new_cte = cte.copy()
+
+                # Isolate inner query: table aliases from one CTE's inner query
+                # must not leak into sibling CTEs. Save→process→restore, keeping
+                # only the CTE alias itself for subsequent CTEs.
+                saved = dict(ctx.table_alias_map)
                 new_cte.args["this"] = self._on_transform_node(cte.this, ctx)
+                ctx.table_alias_map = dict(saved)
                 new_expressions.append(new_cte)
 
                 if cte_alias:
