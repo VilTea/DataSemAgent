@@ -62,8 +62,10 @@ class AgentNode(BaseAgentNode):
                     on_error=h["on_error"],
                 )
 
-        first_time = not self._init_completed
+        init_key = f"_node_init_done_{self.name}"
+        first_time = not shared.get(init_key, False)
         if first_time:
+            shared[init_key] = True
             await context.hooks.emit(HookPoint.NODE_INIT_BEFORE, ctx=context, node=self)
 
         await context.hooks.emit(HookPoint.NODE_PREP_BEFORE, ctx=context, node=self)
@@ -76,7 +78,6 @@ class AgentNode(BaseAgentNode):
         finally:
             await context.hooks.emit(HookPoint.NODE_PREP_AFTER, ctx=context, node=self)
             if first_time:
-                self._init_completed = True
                 await context.hooks.emit(HookPoint.NODE_INIT_AFTER, ctx=context, node=self)
 
     async def exec_async(self, context: AgentContext) -> FinishReason:
@@ -113,5 +114,4 @@ class AgentNode(BaseAgentNode):
             return FinishReason.ERROR
 
     async def post_async(self, shared, context: AgentContext, exec_res) -> str:
-        context.turns += 1
         return await super().post_async(shared, context, exec_res)

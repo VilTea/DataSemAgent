@@ -68,7 +68,6 @@ class BaseAgentNode(BaseModel, AsyncNode, ABC):
     def __init__(self, **kwargs):
         BaseModel.__init__(self,**kwargs)
         AsyncNode.__init__(self)
-        self._init_completed = False
         self._pending_hooks = []
         for attr_name in dir(self.__class__):
             attr = getattr(self.__class__, attr_name, None)

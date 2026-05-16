@@ -27,8 +27,57 @@ class HookPoint:
 
 
 class HookRegistry:
+    _debug: bool = False
+
+    @classmethod
+    def set_debug(cls, enabled: bool) -> None:
+        cls._debug = enabled
+
     def __init__(self):
         self._hooks: list[tuple[str, int, int, Callable, dict, str]] = []
+
+    def register(self, obj: Callable | type | object) -> list[str]:
+        """Register all `@hook`-decorated members from *obj*.
+
+        *obj* may be:
+        - A decorated function → registers it directly
+        - A class → scans methods for `_hook_config` (unbound)
+        - An instance → scans methods for `_hook_config` (bound)
+
+        Returns a list of hook point strings that were registered.
+        """
+        registered: list[str] = []
+
+        cfg = getattr(obj, "_hook_config", None)
+        if cfg is not None:
+            # Single decorated function or bound method
+            self._on_from_config(cfg, obj)
+            registered.append(cfg["point"])
+            return registered
+
+        # Class or instance — scan methods
+        target_cls = obj if inspect.isclass(obj) else type(obj)
+        for attr_name in dir(target_cls):
+            attr = getattr(target_cls, attr_name, None)
+            cfg = getattr(attr, "_hook_config", None)
+            if cfg is None:
+                continue
+            if not inspect.isclass(obj):
+                attr = getattr(obj, attr_name)  # bind to instance
+            self._on_from_config(cfg, attr)
+            registered.append(cfg["point"])
+
+        return registered
+
+    def _on_from_config(self, cfg: dict, callback: Callable) -> None:
+        self.on(
+            cfg["point"], callback,
+            priority=cfg.get("priority", 100),
+            node_name=cfg.get("node_name"),
+            node_type=cfg.get("node_type"),
+            tool_name=cfg.get("tool_name"),
+            on_error=cfg.get("on_error", "log"),
+        )
 
     def on(
         self,
@@ -43,21 +92,29 @@ class HookRegistry:
     ) -> None:
         if on_error not in ("log", "raise"):
             raise ValueError(f"on_error must be 'log' or 'raise', got '{on_error}'")
-        cb_id = id(callback)
-        # Idempotent: skip if this exact callback is already registered at this point
-        if any(h[0] == point and h[2] == cb_id for h in self._hooks):
+        # Use stable id: for bound methods, use the underlying function's id
+        func = getattr(callback, '__func__', callback)
+        cb_key = id(func)
+        if any(h[0] == point and h[2] == cb_key for h in self._hooks):
             return
-        self._hooks.append((point, priority, cb_id, callback, {
+        self._hooks.append((point, priority, id(func), callback, {
             "node_name": node_name, "node_type": node_type, "tool_name": tool_name,
         }, on_error))
         self._hooks.sort(key=lambda h: h[1])  # sort by priority
 
     async def emit(self, point: str, /, **context: any) -> None:
+        matched = False
         for hook_point, _, _, callback, filters, on_error in self._hooks:
             if hook_point != point:
                 continue
             if not self._match(filters, **context):
                 continue
+            matched = True
+            if self._debug or HookRegistry._debug:
+                cb_name = getattr(callback, '__name__', str(callback))
+                if hasattr(callback, '__self__'):
+                    cb_name = f"{type(callback.__self__).__name__}.{cb_name}"
+                logger.info(f"hook '{point}' → {cb_name}")
             try:
                 sig = inspect.signature(callback)
                 filtered = {k: v for k, v in context.items() if k in sig.parameters}
