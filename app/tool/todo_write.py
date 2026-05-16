@@ -1,6 +1,8 @@
 """TodoWrite tool — full-replacement task list with state machine enforcement."""
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, PrivateAttr, model_validator
 
 from app.hook import HookPoint, hook
@@ -11,7 +13,7 @@ from app.tool.base import BaseTool, ToolResult
 class TodoItem(BaseModel):
     id: str
     content: str
-    status: str = "pending"
+    status: Literal["pending", "in_progress", "completed"] = "pending"
 
 
 class TodoParams(BaseModel):
