@@ -127,10 +127,13 @@ class FieldExpander:
                     if table_ref:
                         break
 
-            # CTE reference: use logical field name as alias (CTE columns are logical names)
+            # CTE / subquery reference: keep the logical field name as-is —
+            # do NOT expand OSI expressions.  The CTE already provides the column.
             if table_ref and self._is_cte_ref(table_ref, ctx):
                 return (f"{table_ref}.{field_name}" if isinstance(parsed, exp.Column)
-                        else parsed.sql())
+                        else field_name)
+            if not table_ref and self._is_current_source_cte(ctx):
+                return field_name
 
             # Expression (not a plain column): apply table refs to inner columns
             if not isinstance(parsed, exp.Column):

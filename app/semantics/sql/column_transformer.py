@@ -101,6 +101,10 @@ class ColumnTransformer:
             return
 
         if self._parser.is_dimension(alias):
+            # When the current source is a CTE / subquery, the column comes
+            # from the derived table's output — do NOT expand OSI expressions.
+            if not col.table and self._is_current_source_cte(ctx):
+                return
             try:
                 mapping = self._parser.resolve_field(alias)
                 physical_col = mapping.physical_expression
