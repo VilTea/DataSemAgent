@@ -987,3 +987,65 @@ class TestCTEAdvanced:
         )
         assert "cte.customer_id" in result.physical_sql
         assert "cte.revenue" in result.physical_sql
+
+    def test_cte_alias_preserved_when_renamed(self):
+        """CTE 在 FROM 中被重命名 → 别名不被 CTE 原名替换"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "WITH cte1 AS (SELECT order_id, total_amount FROM orders) "
+            "SELECT t.order_id, t.total_amount FROM cte1 t"
+        )
+        assert "t.order_id" in result.physical_sql
+        assert "t.total_amount" in result.physical_sql
+        assert "cte1.order_id" not in result.physical_sql
+        assert "cte1.total_amount" not in result.physical_sql
+
+    def test_cte_chained_with_aliases(self):
+        """链式 CTE 各自有别名 → 后续 CTE 引用前序 CTE 时别名正确"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "WITH a AS (SELECT customer_id, total_amount FROM orders), "
+            "b AS (SELECT x.customer_id, SUM(x.total_amount) AS total FROM a x GROUP BY x.customer_id) "
+            "SELECT y.customer_id, y.total FROM b y"
+        )
+        assert "x.customer_id" in result.physical_sql
+        assert "x.total_amount" in result.physical_sql
+        assert "y.customer_id" in result.physical_sql
+        assert "y.total" in result.physical_sql
+
+    def test_cte_column_alias_preserves_table_alias(self):
+        """CTE 引用带列别名 → 表别名不被 CTE 原名替换"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "WITH cte AS (SELECT order_id, total_amount FROM orders) "
+            "SELECT t.order_id AS oid, t.total_amount AS amt FROM cte t"
+        )
+        assert "t.order_id AS oid" in result.physical_sql
+        assert "t.total_amount AS amt" in result.physical_sql
+        assert "cte.order_id" not in result.physical_sql
+        assert "cte.total_amount" not in result.physical_sql
+
+    def test_cte_self_join_aliases(self):
+        """CTE 自 JOIN → 两边别名各自保留"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "WITH cte AS (SELECT customer_id, total_amount FROM orders) "
+            "SELECT a.customer_id, a.total_amount, b.total_amount "
+            "FROM cte a JOIN cte b ON a.customer_id = b.customer_id"
+        )
+        assert "a.customer_id" in result.physical_sql
+        assert "a.total_amount" in result.physical_sql
+        assert "b.total_amount" in result.physical_sql
+        assert "cte.customer_id" not in result.physical_sql
