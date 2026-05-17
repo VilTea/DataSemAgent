@@ -59,6 +59,11 @@ def create_test_semantic_model() -> SemanticModel:
                 name="profit",
                 expression=Expression.from_dict({OSIDialect.ANSI_SQL: "amount - cost"}),
             ),
+            OSIField(
+                name="order_label",
+                expression=Expression.from_dict({OSIDialect.ANSI_SQL: "order_id || ' - ' || total_amount"}),
+                dimension=Dimension(),
+            ),
         ],
     )
 
@@ -1049,3 +1054,36 @@ class TestCTEAdvanced:
         assert "a.total_amount" in result.physical_sql
         assert "b.total_amount" in result.physical_sql
         assert "cte.customer_id" not in result.physical_sql
+
+    def test_cte_computed_dimension_not_expanded(self):
+        """CTE 外引用计算维度 → 不展开 OSI 表达式，保留字段名"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "WITH cte AS (SELECT order_label FROM orders) "
+            "SELECT order_label FROM cte"
+        )
+        # Must NOT expand order_label to its physical expression in the outer query
+        assert "order_label AS order_label" in result.physical_sql
+        # The physical expansion should only appear inside the CTE definition
+        outer_part = result.physical_sql.split(") SELECT")[1]
+        assert "order_id" not in outer_part
+
+    def test_cte_chained_computed_dimension(self):
+        """链式 CTE 传递计算维度 → 不展开"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "WITH cte1 AS (SELECT order_label FROM orders), "
+            "cte2 AS (SELECT * FROM cte1) "
+            "SELECT order_label FROM cte2"
+        )
+        # Must NOT expand in the final outer query
+        assert "order_label AS order_label" in result.physical_sql
+        # The last SELECT (outer query) should only have order_label, not the expansion
+        last_select = "SELECT order_label AS order_label FROM cte2"
+        assert last_select in result.physical_sql
