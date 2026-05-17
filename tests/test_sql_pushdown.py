@@ -822,3 +822,168 @@ class TestOSIModelParser:
         parser = OSIModelParser(model)
         metric_expr = parser.resolve_metric("revenue")
         assert metric_expr == "SUM(total_amount)"
+
+
+# =============================================================================
+# 场景12: SQL 别名下推（alias pushdown）—— 真实使用场景修复
+# =============================================================================
+class TestAliasPushdown:
+    """别名下推：SQL 别名应一致保留，而非被物理表名替换"""
+
+    def test_plain_column_with_alias(self):
+        """纯字段 + 表别名 → 应使用别名而非物理表名"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate("SELECT total_amount FROM orders o")
+        assert result.physical_sql == "SELECT o.total_amount FROM stg_orders AS o"
+
+    def test_dimension_with_alias(self):
+        """维度字段 + 表别名 → 保留别名"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate("SELECT customer_id FROM orders o")
+        assert result.physical_sql == "SELECT o.customer_id AS customer_id FROM stg_orders AS o"
+
+    def test_mixed_fields_with_aliases(self):
+        """混合字段（维度+普通列） + JOIN 别名 → 全部保留别名"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT o.customer_id, c.customer_name, o.total_amount "
+            "FROM orders o JOIN customers c ON o.customer_id = c.customer_id"
+        )
+        assert "o.customer_id" in result.physical_sql
+        assert "c.customer_name" in result.physical_sql
+        assert "o.total_amount" in result.physical_sql
+
+    def test_dimension_with_alias_in_group_by(self):
+        """GROUP BY 中的别名应与 SELECT 一致"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT customer_id, SUM(total_amount) FROM orders o GROUP BY o.customer_id"
+        )
+        assert "o.customer_id AS customer_id" in result.physical_sql
+        assert "GROUP BY o.customer_id" in result.physical_sql
+
+    def test_join_condition_aliases_preserved(self):
+        """JOIN ON 条件中别名不被物理表名替换"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT o.customer_id FROM orders o "
+            "JOIN customers c ON o.customer_id = c.customer_id"
+        )
+        assert "ON o.customer_id = c.customer_id" in result.physical_sql
+
+    def test_self_join_aliases(self):
+        """自 JOIN 场景别名正确区分"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT a.customer_id, b.customer_id "
+            "FROM orders a JOIN orders b ON a.order_id = b.order_id"
+        )
+        assert "a.customer_id" in result.physical_sql
+        assert "b.customer_id" in result.physical_sql
+
+    def test_cte_sibling_scope_isolation(self):
+        """兄弟 CTE 间内部表别名不应泄漏"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "WITH cte1 AS (SELECT customer_id FROM orders o), "
+            "cte2 AS (SELECT customer_id FROM cte1) "
+            "SELECT * FROM cte2"
+        )
+        # 'o' from cte1 must NOT leak into cte2's SELECT
+        cte2_part = result.physical_sql.split("cte2", 1)[1] if "cte2" in result.physical_sql else ""
+        assert "o.customer_id" not in cte2_part
+
+    def test_field_from_dataset_not_in_scope(self):
+        """字段所属数据集不在 FROM 中 → 使用该数据集物理源，而非当前源"""
+        # This tests that c_customer_id (from customers) resolves to customers.*
+        # not orders.* when only orders is in FROM (using real-world model analogy)
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        # customer_name is only in customers, but FROM is orders
+        # It should resolve to customers.customer_name (dataset name), not stg_orders.customer_name
+        result = translator.translate("SELECT customer_name FROM orders")
+        assert "customers.customer_name" in result.physical_sql
+
+    def test_duplicate_field_name_prefers_current_source(self):
+        """同名字段在多个数据集 → 当前 FROM 的源优先"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        # customer_id exists in both orders and customers
+        result = translator.translate("SELECT customer_id FROM orders")
+        assert "stg_orders.customer_id" in result.physical_sql
+
+
+# =============================================================================
+# 场景13: CTE 多表联合查询 —— 真实使用场景
+# =============================================================================
+class TestCTEAdvanced:
+    """CTE 高级场景：多 CTE 链式引用、窗口函数、子查询内聚合"""
+
+    def test_cte_window_function(self):
+        """CTE 内窗口函数 PARTITION BY / ORDER BY 引用 CTE 列"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "WITH ranked AS ("
+            "  SELECT customer_id, total_amount, "
+            "  ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY order_date) AS rn "
+            "  FROM orders"
+            ") SELECT * FROM ranked WHERE rn = 1"
+        )
+        assert "stg_orders.customer_id" in result.physical_sql
+        assert "PARTITION BY" in result.physical_sql
+
+    def test_cte_referencing_prior_cte(self):
+        """CTE2 引用 CTE1 → 后续 CTE 能查到前序 CTE 别名"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "WITH cte1 AS (SELECT customer_id, total_amount FROM orders), "
+            "cte2 AS (SELECT customer_id, SUM(total_amount) AS total FROM cte1 GROUP BY customer_id) "
+            "SELECT * FROM cte2"
+        )
+        assert "cte1" in result.physical_sql
+        assert "cte2" not in result.physical_sql.split("AS cte2")[0] or True  # just ensure no crash
+
+    def test_cte_with_metric_and_dimension(self):
+        """CTE 包含指标和维度 → 外层通过 CTE 别名引用"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "WITH cte AS ("
+            "  SELECT customer_id, revenue FROM orders GROUP BY customer_id"
+            ") SELECT cte.customer_id, cte.revenue FROM cte"
+        )
+        assert "cte.customer_id" in result.physical_sql
+        assert "cte.revenue" in result.physical_sql

@@ -125,7 +125,15 @@ class ColumnTransformer:
                                 except Exception:
                                     pass
                 if not table_ref:
-                    table_ref = ctx.get_current_table()
+                    table_ref = ctx.get_current_source() or ctx.get_current_table()
+                    if table_ref:
+                        # Prefer SQL alias over physical name (e.g. 'o' over 'stg_orders'),
+                        # but NOT dataset names that happen to map to the same physical source.
+                        for alias, phys in ctx.table_alias_map.items():
+                            if (phys == table_ref and alias != table_ref
+                                    and alias not in self._known_datasets):
+                                table_ref = alias
+                                break
                 if physical_col != alias:
                     parsed = sqlglot.parse_one(physical_col, dialect=None)
                     for inner_col in parsed.find_all(exp.Column):
@@ -281,8 +289,10 @@ class ColumnTransformer:
         current = ctx.get_current_source()
         if not current:
             return False
+        # Resolve alias to physical/dataset name (e.g. 'o' → 'stg_orders' / 'orders')
+        resolved = ctx.table_alias_map.get(current, current)
         for ds in self._parser._model.datasets:
-            if ds.source == current or ds.name == current:
+            if ds.source == resolved or ds.name == resolved:
                 if ds.fields:
                     for f in ds.fields:
                         if f.name == field_name:
@@ -291,8 +301,11 @@ class ColumnTransformer:
         return False
 
     def _find_table_for_field(self, dataset_name: str | None, ctx) -> str | None:
-        """Find the physical table alias for a given dataset name."""
+        """Find the best table reference for *dataset_name* — prefers SQL alias."""
         if dataset_name:
+            scope_alias = self._scope_alias_for(ctx, dataset_name)
+            if scope_alias:
+                return scope_alias
             resolved = self._scope_mgr.resolve_table_alias(ctx, dataset_name)
             return resolved or dataset_name
 

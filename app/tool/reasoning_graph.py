@@ -66,29 +66,36 @@ class ReasoningGraphTool(BaseTool):
             ex.execute("MATCH (f:Fact) WHERE f.is_ontology = True RETURN COUNT(*) AS cnt")
         )[0][0]
 
-        # Discover which edge types actually exist (avoid misleading the agent).
-        all_edge_labels = ("input_to", "outputs", "references", "sourced_from", "equivalent_to")
-        existing_edges: list[str] = []
-        for label in all_edge_labels:
+        # ── node schema (CALL table_info gives property names) ──
+        node_schemas: list[str] = []
+        for label in ("Fact", "ReasoningStep", "OSIRef", "Source"):
             try:
-                cnt = self._fetch_all(
-                    ex.execute(f"MATCH ()-[e:{label}]->() RETURN COUNT(*) AS cnt")
-                )[0][0]
-                if cnt > 0:
-                    existing_edges.append(label)
+                rows = self._fetch_all(
+                    ex.execute(f"CALL table_info('{label}') RETURN name")
+                )
+                props = [str(r[0]) for r in rows if str(r[0]) != "id"]
+                if props:
+                    node_schemas.append(f"{label}{{{', '.join(props)}}}")
             except Exception:
                 pass
 
-        # Build edge type list with property hints for types that have them
-        edge_parts = []
-        for label in existing_edges:
-            if label == "input_to":
-                edge_parts.append("input_to(dependency: necessary/sufficient/contributing)")
-            elif label == "equivalent_to":
-                edge_parts.append("equivalent_to(merged=True for synonyms)")
-            else:
-                edge_parts.append(label)
-        edge_desc = ", ".join(edge_parts) if edge_parts else "(no edges yet)"
+        # ── edge schema ──
+        edge_schemas: list[str] = []
+        for label in ("input_to", "outputs", "references", "sourced_from", "equivalent_to"):
+            try:
+                rows = self._fetch_all(
+                    ex.execute(f"CALL table_info('{label}') RETURN name")
+                )
+                props = [str(r[0]) for r in rows if str(r[0]) not in ("id", "from", "to")]
+                if props:
+                    edge_schemas.append(f"{label}{{{', '.join(props)}}}")
+                else:
+                    edge_schemas.append(label)
+            except Exception:
+                pass
+
+        if not edge_schemas:
+            edge_schemas.append("(no edges yet)")
 
         return (
             f"Reasoning chain graph ({n} nodes, {e} edges, {ont} ontology concepts). "
@@ -99,10 +106,9 @@ class ReasoningGraphTool(BaseTool):
             f"When facing a complex analytical problem, ALWAYS check this graph first "
             f"to see if there are relevant reusable reasoning patterns before starting "
             f"from scratch.\n\n"
-            f"Existing edge types: {edge_desc}.\n"
-            f"Node types: Fact (is_ontology=True, parent_id for hierarchy; children "
-            f"inherit parent chains), ReasoningStep (method: deduction/induction/analogy/"
-            f"abduction), OSIRef, Source.\n"
+            f"Schema — ONLY these tables & columns exist; do NOT invent others:\n"
+            f"  Nodes: {', '.join(node_schemas) or '(none)'}\n"
+            f"  Edges: {', '.join(edge_schemas)}\n"
             f"Input is a Cypher query."
         )
 

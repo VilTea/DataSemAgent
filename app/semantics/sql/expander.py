@@ -111,7 +111,8 @@ class FieldExpander:
             if not table_ref:
                 current = self._scope_mgr.get_current_source(ctx)
                 if current and current != 'cte':
-                    table_ref = current
+                    # Prefer SQL alias over physical name (e.g. 'o' over 'stg_orders')
+                    table_ref = self._find_alias_for_source(ctx, current)
             if not table_ref:
                 for src_alias, phys_name in ctx.table_alias_map.items():
                     try:
@@ -181,6 +182,18 @@ class FieldExpander:
     # Table reference helpers
     # ------------------------------------------------------------------ #
 
+    def _find_alias_for_source(self, ctx, physical_or_name: str) -> str:
+        """Find the SQL alias for *physical_or_name*, falling back to the input.
+
+        Only returns a true alias (user-given, e.g. 'o' for 'orders'), not a
+        dataset name that happens to map to the same physical source.
+        """
+        known_names = {ds.name for ds in self._parser._model.datasets}
+        for alias, phys in ctx.table_alias_map.items():
+            if phys == physical_or_name and alias != physical_or_name and alias not in known_names:
+                return alias
+        return physical_or_name
+
     def _is_current_source_cte(self, ctx) -> bool:
         """True when the current source is a CTE / derived table, not a base dataset."""
         current = self._scope_mgr.get_current_source(ctx)
@@ -193,8 +206,10 @@ class FieldExpander:
         current = self._scope_mgr.get_current_source(ctx)
         if not current:
             return False
+        # Resolve alias to physical/dataset name (e.g. 'o' → 'stg_orders' / 'orders')
+        resolved = ctx.table_alias_map.get(current, current)
         for ds in self._parser._model.datasets:
-            if ds.source == current or ds.name == current:
+            if ds.source == resolved or ds.name == resolved:
                 if ds.fields:
                     for f in ds.fields:
                         if f.name == field_name:
