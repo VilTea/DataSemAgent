@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from abc import ABC, abstractmethod
 from typing import Any, TYPE_CHECKING, TypeVar
 
@@ -17,6 +18,25 @@ if TYPE_CHECKING:
 T = TypeVar('T')
 _SINGLETON_KEY =  "__agent_context_singleton__"
 
+
+class AgentNodeRuntime(BaseModel):
+    """Per-node-instance state that survives PocketFlow's copy.copy().
+
+    PocketFlow copies nodes on every iteration, so instance attributes set
+    during execution are lost.  This class lives on AgentContext (which
+    persists across the flow) and is keyed by the node's *node_instance_id*
+    — a UUID generated at __init__ that copy.copy() faithfully reproduces.
+
+    Fields:
+        init_completed:  NODE_INIT_BEFORE has fired at least once.
+        effective_system_prompt:  System prompt after hook modifications
+            (e.g. skill catalog injection).  Restored on each prep_async.
+    """
+
+    init_completed: bool = False
+    effective_system_prompt: str | None = None
+
+
 class AgentContext(BaseModel):
     shared: dict[str, Any] = Field(default_factory=dict, description="Shared flow message bus")
 
@@ -27,6 +47,7 @@ class AgentContext(BaseModel):
     hooks: HookRegistry = Field(default_factory=HookRegistry)
 
     _pipeline: Consumable | None = PrivateAttr(default=None)
+    _node_runtimes: dict[str, AgentNodeRuntime] = PrivateAttr(default_factory=dict)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -39,6 +60,12 @@ class AgentContext(BaseModel):
 
     def get_shared(self) -> dict[str, Any]:
         return self.shared
+
+    def node_runtime(self, node_instance_id: str) -> AgentNodeRuntime:
+        """Get or create the runtime state for *node_instance_id*."""
+        if node_instance_id not in self._node_runtimes:
+            self._node_runtimes[node_instance_id] = AgentNodeRuntime()
+        return self._node_runtimes[node_instance_id]
 
     async def publish(self, event: Any) -> None:
         if self._pipeline is not None:
@@ -56,8 +83,10 @@ class BaseAgentNode(BaseModel, AsyncNode, ABC):
     max_retries: int = Field(default=1)
     wait: int = Field(default=0)
 
+    _node_instance_id: str = PrivateAttr(default_factory=lambda: uuid.uuid4().hex)
+
     def __init__(self, **kwargs):
-        BaseModel.__init__(self,**kwargs)
+        BaseModel.__init__(self, **kwargs)
         AsyncNode.__init__(self)
         self._pending_hooks = []
         for attr_name in dir(self.__class__):

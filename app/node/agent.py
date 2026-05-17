@@ -1,4 +1,3 @@
-import uuid
 from typing import Any
 
 from pydantic import Field, model_validator, ConfigDict
@@ -11,8 +10,6 @@ from app.tool.base import BaseTool
 
 
 class AgentNode(BaseAgentNode):
-    id: str = Field(default=str(uuid.uuid4()), description="唯一标识符")
-
     name: str = Field(..., description="智能体名称", min_length=1, max_length=100)
     description: str | None = Field(default=None, description="智能体描述")
     system_prompt: str | None = Field(default=None, description="系统提示词")
@@ -30,7 +27,7 @@ class AgentNode(BaseAgentNode):
             self.llm = create_llm(config_name=self.name) # type: ignore[arg-type]
 
         self.logger_bind = {
-            "agent_id": self.id,
+            "agent_id": self._node_instance_id,
             "agent_name": self.name,
             "agent_api_type": self.llm.__class__.__name__
         }
@@ -62,11 +59,20 @@ class AgentNode(BaseAgentNode):
                     on_error=h["on_error"],
                 )
 
-        init_key = f"_node_init_done_{self.name}"
-        first_time = not shared.get(init_key, False)
+        rt = context.node_runtime(self._node_instance_id)
+
+        # PocketFlow copy.copy() resets instance attributes on every iteration.
+        # Restore hook-modified state from the context-scoped runtime.
+        if rt.effective_system_prompt is not None:
+            self.system_prompt = rt.effective_system_prompt
+
+        first_time = not rt.init_completed
         if first_time:
-            shared[init_key] = True
+            rt.init_completed = True
             await context.hooks.emit(HookPoint.NODE_INIT_BEFORE, ctx=context, node=self)
+            # Persist any modification to system_prompt made by init hooks.
+            if self.system_prompt != rt.effective_system_prompt:
+                rt.effective_system_prompt = self.system_prompt
 
         await context.hooks.emit(HookPoint.NODE_PREP_BEFORE, ctx=context, node=self)
         if self.system_prompt:
