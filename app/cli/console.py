@@ -107,15 +107,15 @@ class RichConsumer(EventConsumer):
         try:
             d = json.loads(args)
         except Exception:
-            return args[:300]
+            return args
         if tool_name == "sql_exec":
-            return d.get("sql", "")[:500]
-        if tool_name in ("entity_graph", "metric_lineage"):
-            return d.get("query", "")[:500]
+            return d.get("sql", "")
+        if tool_name in ("entity_graph", "metric_lineage", "reasoning_graph"):
+            return d.get("query", "")
         if tool_name == "activate_skill":
-            return f"name={d.get('name', '')}"[:200]
-        items = list(d.items())[:3]
-        return ", ".join(f"{k}={str(v)[:60]}" for k, v in items)[:200]
+            return f"name={d.get('name', '')}"
+        items = list(d.items())
+        return ", ".join(f"{k}={v}" for k, v in items)
 
     # ------------------------------------------------------------------ #
     #  format tool result
@@ -132,10 +132,10 @@ class RichConsumer(EventConsumer):
         if tool_name == "activate_skill":
             first = _first_line(content)
             if first:
-                return Text(f"  {first[:300]}", style="dim")
+                return Text(f"  {first}", style="dim")
             return None
         first = _first_line(content)
-        return Text(f"  {first[:300]}", style="dim") if first else None
+        return Text(f"  {first}", style="dim") if first else None
 
     def _format_sql_result(self, content: str) -> Text:
         m = re.search(r"\*\*Total rows\*\*:\s*(\d+)", content)
@@ -166,7 +166,7 @@ class RichConsumer(EventConsumer):
             table = Table(show_header=True, header_style="bold", show_lines=False,
                           padding=(0, 1), collapse_padding=True, box=None)
             for h in header:
-                table.add_column(h, overflow="ellipsis", max_width=40)
+                table.add_column(h, overflow="fold", max_width=60)
             for row in rows[:_RESULT_PREVIEW_LINES]:
                 table.add_row(*row)
             body.append(table)
@@ -207,7 +207,7 @@ class RichConsumer(EventConsumer):
                 stripped = line.strip()
                 if stripped and not stripped.startswith("*") and not stripped.startswith("```"):
                     prefix = "red" if stripped.startswith("Query failed") else "dim"
-                    body.append(f"  {stripped[:300]}", style=prefix)
+                    body.append(f"  {stripped}", style=prefix)
                     break
         return body if body else None
 

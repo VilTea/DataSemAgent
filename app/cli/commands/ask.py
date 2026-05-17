@@ -6,7 +6,6 @@ from rich.prompt import Prompt
 
 from app.cli.i18n import I18nLoader
 
-
 async def run_ask(model_path: str, lang: str, console: Console) -> None:
     from app.flow import react_flow
     from app.node.agent import AgentNode
@@ -64,7 +63,8 @@ async def run_ask(model_path: str, lang: str, console: Console) -> None:
     pipeline = QueuePipeline()
     pipeline.register(RichConsumer(console))
 
-    class _TodoPanelConsumer:
+    from app.pipeline import EventConsumer
+    class _TodoPanelConsumer(EventConsumer):
         async def start(self): pass
         async def stop(self): pass
         async def consume(self, event):
