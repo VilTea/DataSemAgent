@@ -9,6 +9,7 @@ from app.semantics.graph.entity.mapping import (
     TableSource,
     UnionSource,
 )
+from app.semantics.models import SemanticModel
 
 _UNLIMITED = 999999
 
@@ -20,9 +21,17 @@ class GraphCompiler:
     The caller is responsible for loading the document via a GraphLoader.
     """
 
-    def __init__(self, mapping: DataMapping, executor: SqlExecutor):
+    def __init__(self, mapping: DataMapping, executor: SqlExecutor,
+                 model: SemanticModel | None = None):
         self._mapping = mapping
         self._executor = executor
+        # OSI logical name → physical column reference map.
+        self._logical_to_phys: dict[str, str] = {}
+        if model is not None:
+            for ds in model.datasets:
+                for f in (ds.fields or []):
+                    phys = f.expression.dialects[0].expression if f.expression.dialects else f.name
+                    self._logical_to_phys[f.name] = phys
 
     async def build(self) -> GraphDocument:
         doc = GraphDocument()
@@ -153,12 +162,18 @@ class GraphCompiler:
         for prop_name, col_ref in em.properties.items():
             if col_ref == "${key}":
                 props[prop_name] = key_val
-            elif col_ref in row:
-                props[prop_name] = row[col_ref]
-            elif "." in col_ref:
+                continue
+            # Resolve OSI logical name → physical column name, then
+            # physical → row value (row keys are physical from SELECT *).
+            phys_col = self._logical_to_phys.get(col_ref, col_ref)
+            if phys_col in row:
+                props[prop_name] = row[phys_col]
+                continue
+            if "." in col_ref:
                 _, col = col_ref.split(".", 1)
-                if col in row:
-                    props[prop_name] = row[col]
+                phys_col2 = self._logical_to_phys.get(col, col)
+                if phys_col2 in row:
+                    props[prop_name] = row[phys_col2]
         return props
 
     @staticmethod

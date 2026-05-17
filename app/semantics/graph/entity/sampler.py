@@ -1,13 +1,27 @@
 """Data sampler — reads first N rows from each table via a database executor."""
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from app.db.base import SqlExecutor
 
+if TYPE_CHECKING:
+    from app.semantics.models import SemanticModel
+
 
 class DataSampler:
-    def __init__(self, executor: SqlExecutor, sample_size: int = 3):
+    def __init__(self, executor: SqlExecutor, model: SemanticModel | None = None, sample_size: int = 3):
         self._executor = executor
         self._sample_size = sample_size
+        # Build physical → OSI logical name map per dataset source.
+        self._phys_to_logical: dict[str, dict[str, str]] = {}
+        if model is not None:
+            for ds in model.datasets:
+                src_map: dict[str, str] = {}
+                for f in (ds.fields or []):
+                    phys = f.expression.dialects[0].expression if f.expression.dialects else f.name
+                    src_map[phys] = f.name
+                self._phys_to_logical[ds.source] = src_map
 
     async def sample(self, table_names: list[str]) -> dict[str, dict]:
         result = {}
@@ -17,9 +31,10 @@ class DataSampler:
                     f"SELECT * FROM {table}", limit=self._sample_size
                 )
                 if rows:
+                    remap = self._phys_to_logical.get(table, {})
                     result[table] = {
-                        "columns": list(rows[0].keys()),
-                        "rows": rows,
+                        "columns": [remap.get(c, c) for c in rows[0].keys()],
+                        "rows": [{remap.get(k, k): v for k, v in r.items()} for r in rows],
                     }
             except Exception:
                 result[table] = {"columns": [], "rows": []}

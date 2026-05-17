@@ -285,7 +285,7 @@ class SamplerNode(_EntityFlowNode):
 
         await _emit(shared, {"stage": _STAGE, "step": "sampler", "status": "running",
                              "tables": table_names})
-        sampler = DataSampler(executor, sample_size=3)
+        sampler = DataSampler(executor, model=model, sample_size=3)
         samples = await sampler.sample(table_names)
         shared[K_SAMPLES] = samples
         await _emit(shared, {"stage": _STAGE, "step": "sampler", "status": "done",
@@ -764,7 +764,8 @@ class CompilerNode(_EntityFlowNode):
         executor = shared[K_EXECUTOR]
         loader = shared.get("entity_loader")
         await _emit(shared, {"stage": _STAGE, "step": "compiler", "status": "running"})
-        compiler = GraphCompiler(mapping, executor)
+        model: SemanticModel = shared.get(K_MODEL)
+        compiler = GraphCompiler(mapping, executor, model=model)
         doc = await compiler.build()
         if loader is not None:
             loader.load(doc)
