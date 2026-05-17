@@ -55,15 +55,18 @@ def _build_description(ex) -> str:
     nodes = _fetch_all(ex.execute("MATCH (n) RETURN COUNT(*) AS cnt"))[0][0]
     edges = _fetch_all(ex.execute("MATCH ()-[e]->() RETURN COUNT(*) AS cnt"))[0][0]
 
+    compat_note = ""
+    if getattr(ex, 'graph_type', '') == 'kuzu':
+        compat_note = " KuzuDB: no type()/labels() — use only listed names."
+
     lines = [
-        f"Query the business entity graph ({nodes} nodes, {edges} edges). "
-        f"Built from the OSI semantic model — every row from the relational database "
-        f"is a node, every foreign key is an edge. "
-        f"The same data accessible via sql_exec lives here as connected entities. "
-        f"Input is a Cypher query.\n",
+        f"Business entity graph ({nodes} nodes, {edges} edges). "
+        f"Built from the OSI model — every DB row is a node, every FK is an edge.\n",
+        f"CRITICAL: use ONLY the exact labels & properties below. "
+        f"Case-sensitive. Do NOT guess or invent names.{compat_note}\n",
     ]
     if schema and isinstance(schema, EntityGraphSchema):
-        lines.append("## Entity types")
+        lines.append("## Node labels & properties")
         for e in schema.entities:
             cnt_row = _fetch_all(ex.execute(f"MATCH (n:{e.label}) RETURN COUNT(*) AS cnt"))
             cnt = cnt_row[0][0] if cnt_row else 0
@@ -72,36 +75,29 @@ def _build_description(ex) -> str:
             if e.is_event: tags.append("event")
             if e.is_weak: tags.append(f"weak→{', '.join(e.strong_parents)}")
             tag = f" ({', '.join(tags)})" if tags else ""
-            lines.append(f"- **{e.label}**{tag} ({cnt} nodes): {e.description}")
-            if props:
-                lines.append(f"  Properties: {', '.join(props)}")
-        lines.append("\n## Relationships")
+            lines.append(f"  {e.label}{tag} ({cnt}) → {', '.join(props) if props else 'id only'}")
+        lines.append("\n## Relationship labels & directions")
         for r in schema.relations:
             cnt_row = _fetch_all(ex.execute(f"MATCH ()-[e:{r.label}]->() RETURN COUNT(*) AS cnt"))
             cnt = cnt_row[0][0] if cnt_row else 0
-            lines.append(f"- **{r.label}** ({cnt} edges): {r.from_} → {r.to}")
-    lines.append("\n## Example queries")
-    if schema and schema.entities:
-        e0 = schema.entities[0]
-        lines.append(f"MATCH (n:{e0.label}) RETURN n LIMIT 5")
-    if schema and schema.relations:
-        r0 = schema.relations[0]
-        lines.append(f"MATCH ()-[e:{r0.label}]->() RETURN e LIMIT 5")
+            lines.append(f"  ({r.from_})-[{r.label}]->({r.to}) ({cnt})")
+        lines.append("\n## Example queries")
+        if schema and schema.entities:
+            lines.append(f"  MATCH (n:{schema.entities[0].label}) RETURN n LIMIT 5")
+        if schema and schema.relations:
+            r0 = schema.relations[0]
+            lines.append(f"  MATCH (a:{r0.from_})-[e:{r0.label}]->(b:{r0.to}) RETURN a, e, b LIMIT 5")
     return "\n".join(lines)
 
 
 def _fetch_properties(ex, label: str) -> list[str]:
-    """Return sorted property names for a node label, excluding internal keys."""
+    """Return sorted property names for a node/edge label via CALL table_info."""
     try:
-        r = ex.execute(f"MATCH (n:{label}) RETURN n LIMIT 1")
-        rows = _fetch_all(r)
-        if not rows:
-            return []
-        raw = str(rows[0][0])
-        # Extract quoted keys from the dict-like repr: 'key': value
-        import re
-        keys = re.findall(r"'([^']+)'\s*:", raw)
-        return sorted(k for k in keys if not k.startswith("_"))
+        rows = _fetch_all(ex.execute(f"CALL table_info('{label}') RETURN name"))
+        return sorted(
+            str(r[0]) for r in rows
+            if str(r[0]) not in ("id", "from", "to")
+        )
     except Exception:
         return []
 

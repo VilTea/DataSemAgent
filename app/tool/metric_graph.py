@@ -50,14 +50,37 @@ class MetricGraphTool(BaseTool):
 
 
 def _build_description(ex) -> str:
+    compat_note = ""
+    if getattr(ex, 'graph_type', '') == 'kuzu':
+        compat_note = ("\nKuzuDB: no OPTIONAL MATCH, no collect(), no type()/labels(). "
+                       "Use only listed names.\n")
+
     r = ex.execute("MATCH (m:Metric) RETURN m.name, m.description ORDER BY m.name")
     metrics = _fetch_all(r)
-    r = ex.execute("MATCH (d:Dimension) RETURN DISTINCT d.name, d.dataset, d.is_time ORDER BY d.name")
+    r = ex.execute("MATCH (d:Dimension) RETURN d.name, d.dataset, d.is_time ORDER BY d.name")
     dims = _fetch_all(r)
     r = ex.execute("MATCH ()-[e]->() RETURN DISTINCT label(e) AS rel")
     edges = _fetch_all(r)
 
-    lines = ["Query the metric lineage knowledge graph. Input is a Cypher query.\n", "## Metrics"]
+    # Node schemas
+    node_schemas = {}
+    for label in ("Metric", "Dimension", "PhysicalField", "LogicalDataset", "LogicalDimension"):
+        try:
+            rows = _fetch_all(ex.execute(f"CALL table_info('{label}') RETURN name"))
+            props = [str(r2[0]) for r2 in rows if str(r2[0]) not in ("id",)]
+            if props:
+                node_schemas[label] = props
+        except Exception:
+            pass
+
+    lines = [
+        f"Metric lineage graph. "
+        f"Use ONLY exact labels & properties below — do NOT guess.{compat_note}",
+        "## Node types & properties"
+    ]
+    for label, props in sorted(node_schemas.items()):
+        lines.append(f"  {label}: {', '.join(props)}")
+    lines.append("\n## Metrics")
     for name, desc in metrics:
         lines.append(f"- **{name}**: {desc or ''}")
     lines.append("\n## Dimensions")
