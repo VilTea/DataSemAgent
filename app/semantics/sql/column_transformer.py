@@ -147,10 +147,14 @@ class ColumnTransformer:
             except FieldNotFoundError:
                 pass
         elif not self._parser.is_metric(alias):
-            table_ref = ctx.get_table_alias(col.table) if col.table else None
-            if table_ref:
-                col.set("table", table_ref)
-            else:
+            # Only replace the table when col.table is a bare dataset NAME
+            # (e.g. 'store_sales') — preserve user aliases and CTE names.
+            if col.table and col.table in self._known_datasets:
+                table_ref = ctx.get_table_alias(col.table)
+                if table_ref:
+                    scope_alias = self._scope_alias_for(ctx, col.table)
+                    col.set("table", scope_alias or table_ref)
+            elif not col.table:
                 try:
                     mapping = self._parser.resolve_field(alias)
                     physical_col = mapping.physical_expression

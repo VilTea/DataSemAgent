@@ -145,8 +145,13 @@ class ClauseTransformer:
             name = col.name
 
             table_ref = None
-            if col.table:
+            # Only resolve the table when col.table is a bare dataset NAME
+            # (e.g. 'store_sales') — preserve user aliases and CTE names.
+            if col.table and col.table in self._col_transformer._known_datasets:
                 table_ref = ctx.get_table_alias(col.table)
+                scope_alias = self._col_transformer._scope_alias_for(ctx, col.table)
+                if scope_alias:
+                    table_ref = scope_alias
 
             if not table_ref:
                 try:
