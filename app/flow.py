@@ -27,11 +27,10 @@ class AgentFlow(AsyncFlow):
 
         self.context.memory.add_message(Message.user_message(prompt))
 
-        if self._pipeline is not None:
-            self.context._pipeline = self._pipeline
-            await self._pipeline.start()
-
         try:
+            if self._pipeline is not None:
+                self.context._pipeline = self._pipeline
+                await self._pipeline.start(self.context)
             await asyncio.sleep(0)
             result = await self._run_async(self.context.get_shared())
             await asyncio.sleep(0)
