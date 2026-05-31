@@ -8,6 +8,13 @@ from typing import Callable
 from app.logger import logger
 
 
+def _callback_belongs_to(callback: Callable, obj: object) -> bool:
+    """True if *callback* is a method bound to *obj* (or the object itself)."""
+    if callback is obj:
+        return True
+    return getattr(callback, '__self__', None) is obj
+
+
 class HookPoint:
     """Lifecycle hook points with documented callback parameters.
 
@@ -25,6 +32,12 @@ class HookPoint:
     FLOW_START = "flow.start"                         # callback(ctx)
     FLOW_END = "flow.end"                             # callback(ctx)
 
+OBSERVE_HOOK_POINTS = frozenset({
+    HookPoint.FLOW_START, HookPoint.FLOW_END,
+    HookPoint.NODE_EXEC_BEFORE, HookPoint.NODE_EXEC_AFTER,
+    HookPoint.TOOL_BEFORE, HookPoint.TOOL_AFTER,
+})
+
 
 class HookRegistry:
     _debug: bool = False
@@ -36,7 +49,11 @@ class HookRegistry:
     def __init__(self):
         self._hooks: list[tuple[str, int, int, Callable, dict, str]] = []
 
-    def register(self, obj: Callable | type | object) -> list[str]:
+    def register(
+        self, obj: Callable | type | object,
+        *,
+        whitelist: frozenset | None = None,
+    ) -> list[str]:
         """Register all `@hook`-decorated members from *obj*.
 
         *obj* may be:
@@ -44,14 +61,22 @@ class HookRegistry:
         - A class → scans methods for `_hook_config` (unbound)
         - An instance → scans methods for `_hook_config` (bound)
 
+        When *whitelist* is provided, only hooks whose point is in the
+        set are registered, and all registered hooks have ``on_error``
+        forced to ``"log"``.
+
         Returns a list of hook point strings that were registered.
         """
         registered: list[str] = []
+        force_log = whitelist is not None
 
         cfg = getattr(obj, "_hook_config", None)
         if cfg is not None:
             # Single decorated function or bound method
-            self._on_from_config(cfg, obj)
+            if whitelist is not None and cfg["point"] not in whitelist:
+                logger.debug(f"Skipping hook {cfg['point']}: not in whitelist")
+                return registered
+            self._on_from_config(cfg, obj, force_log=force_log)
             registered.append(cfg["point"])
             return registered
 
@@ -62,21 +87,34 @@ class HookRegistry:
             cfg = getattr(attr, "_hook_config", None)
             if cfg is None:
                 continue
+            if whitelist is not None and cfg["point"] not in whitelist:
+                logger.debug(f"Skipping hook {cfg['point']}: not in whitelist")
+                continue
             if not inspect.isclass(obj):
                 attr = getattr(obj, attr_name)  # bind to instance
-            self._on_from_config(cfg, attr)
+            self._on_from_config(cfg, attr, force_log=force_log)
             registered.append(cfg["point"])
 
         return registered
 
-    def _on_from_config(self, cfg: dict, callback: Callable) -> None:
+    def unregister(self, obj: object) -> None:
+        """Remove all hooks whose callback belongs to *obj*.
+
+        Safe to call even if *obj* was never registered.
+        """
+        self._hooks = [
+            h for h in self._hooks
+            if not _callback_belongs_to(h[3], obj)
+        ]
+
+    def _on_from_config(self, cfg: dict, callback: Callable, *, force_log: bool = False) -> None:
         self.on(
             cfg["point"], callback,
             priority=cfg.get("priority", 100),
             node_name=cfg.get("node_name"),
             node_type=cfg.get("node_type"),
             tool_name=cfg.get("tool_name"),
-            on_error=cfg.get("on_error", "log"),
+            on_error="log" if force_log else cfg.get("on_error", "log"),
         )
 
     def on(
