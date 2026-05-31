@@ -18,6 +18,7 @@ from app.semantics.sql.exceptions import (
 from app.semantics.sql.parser import OSIModelParser
 from app.semantics.sql.translator import SQLTranslator
 from app.semantics.sql.validator import SQLValidator, SQLValidationError
+from app.hook import HookPoint, hook
 from app.tool.base import BaseTool, ToolResult
 
 
@@ -26,8 +27,8 @@ class SqlExecTool(BaseTool):
     name: str = "sql_exec"
     description: str = (
         "Execute logical SQL queries against the semantic data model. "
-        "Use semantic field names as defined in the OSI model — dimensions and metrics by their model names. "
-        "The SQL is validated against OSI rules, translated to physical SQL, and executed."
+        "Schema (datasets, fields, metrics, validation rules) is in the "
+        "system prompt under <sql_schema>."
     )
     strict: bool = True
     parameters: dict = {
@@ -35,7 +36,7 @@ class SqlExecTool(BaseTool):
         "properties": {
             "sql": {
                 "type": "string",
-                "description": "The logical SQL query using semantic field names (d_dimension, m_metric)",
+                "description": "Logical SQL — use OSI field names, not physical column names.",
             }
         },
         "required": ["sql"],
@@ -57,6 +58,7 @@ class SqlExecTool(BaseTool):
     _translator: SQLTranslator = PrivateAttr(default=None)
     _executor: SqlExecutor = PrivateAttr(default=None)
     _physical_to_logical: dict[str, str] = PrivateAttr(default_factory=dict)
+    _ddl_prompt: str = PrivateAttr(default="")
 
     @model_validator(mode="after")
     def initialize_sql_components(self) -> "SqlExecTool":
@@ -67,10 +69,19 @@ class SqlExecTool(BaseTool):
         self._executor = self._create_executor(self.db_config_key)
         self._physical_to_logical = self._build_reverse_mappings(model)
         ddl_generator = DDLGenerator(model)
-        self.description += f"""
-{ddl_generator.prompt}
-        """
+        self._ddl_prompt = ddl_generator.prompt
         return self
+
+    @hook(HookPoint.NODE_INIT_BEFORE)
+    def _inject_schema(self, ctx, node):
+        if not node.system_prompt or not self._ddl_prompt:
+            return
+        node.system_prompt = (
+            node.system_prompt
+            + "\n\n<sql_schema>\n"
+            + self._ddl_prompt
+            + "\n</sql_schema>"
+        )
 
     async def execute(self, tool_call: ToolCall, **kwargs) -> ToolResult:
         sql = tool_call.function.arguments_dict.get("sql", "").strip()

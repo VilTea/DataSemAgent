@@ -57,7 +57,12 @@ class SkillActivateTool(BaseTool):
         catalog = skill_loader.get_catalog_text()
         if not catalog or not node.system_prompt:
             return
-        node.system_prompt = node.system_prompt + "\n\n" + catalog
+        node.system_prompt = (
+            node.system_prompt
+            + "\n\n<available_skills>\n"
+            + catalog
+            + "\n</available_skills>"
+        )
 
     def is_available(self) -> bool:
         return len(self._skills) > 0

@@ -2,6 +2,7 @@
 from typing import Literal
 from pydantic import PrivateAttr, model_validator
 from app.db.graph import GraphExecutor
+from app.hook import HookPoint, hook
 from app.schema import ToolCall
 from app.semantics.graph.init_state import init_state
 from app.tool.base import BaseTool, ToolResult
@@ -10,7 +11,13 @@ from app.tool.base import BaseTool, ToolResult
 class ReasoningGraphTool(BaseTool):
     permission: Literal["global", "skills", "agent"] = "agent"
     name: str = "reasoning_graph"
-    description: str = "Query the reasoning chain graph (Cypher). Input is a Cypher query."
+    description: str = (
+        "Query the reasoning chain graph (Cypher). "
+        "Schema (node/edge types, properties) is in the system prompt under "
+        "<reasoning_graph_schema>. If the graph has not been built yet, it is "
+        "created automatically after several conversation rounds. "
+        "All content is stored in English."
+    )
     strict: bool = True
     parameters: dict = {
         "type": "object", "properties": {
@@ -21,21 +28,28 @@ class ReasoningGraphTool(BaseTool):
     _executor: GraphExecutor | None = PrivateAttr(default=None)
 
     def is_available(self) -> bool:
-        return True  # always show; return "not ready" when graph not yet built
+        return True
 
     @model_validator(mode="after")
     def _init(self) -> "ReasoningGraphTool":
         if init_state.is_ready("reasoning_graph"):
             self._executor = init_state.get_executor("reasoning_graph")
-            self.description = self._build_desc()
-        else:
-            self.description = (
-                "Query the reasoning chain graph (Cypher). "
-                "The graph has not been built yet — it is created automatically "
-                "after several conversation rounds when the reflection mechanism runs. "
-                "All content is stored in English."
-            )
         return self
+
+    @hook(HookPoint.NODE_INIT_BEFORE)
+    def _inject_schema(self, ctx, node):
+        if not node.system_prompt:
+            return
+        ex = self._executor or init_state.get_executor("reasoning_graph")
+        if ex is None:
+            return
+        text = self._build_schema(ex)
+        node.system_prompt = (
+            node.system_prompt
+            + "\n\n<reasoning_graph_schema>\n"
+            + text
+            + "\n</reasoning_graph_schema>"
+        )
 
     async def execute(self, tool_call: ToolCall, **kwargs) -> ToolResult:
         query = tool_call.function.arguments_dict.get("query", "").strip()
@@ -56,10 +70,7 @@ class ReasoningGraphTool(BaseTool):
         except Exception as e:
             return ToolResult.failure_response(tool_call.id, self.name, f"Query failed: {e}")
 
-    def _build_desc(self) -> str:
-        ex = self._executor or init_state.get_executor("reasoning_graph")
-        if ex is None:
-            return "Query the reasoning chain graph."
+    def _build_schema(self, ex) -> str:
         n = self._fetch_all(ex.execute("MATCH (n) RETURN COUNT(*) AS cnt"))[0][0]
         e = self._fetch_all(ex.execute("MATCH ()-[e]->() RETURN COUNT(*) AS cnt"))[0][0]
         ont = self._fetch_all(
@@ -99,17 +110,10 @@ class ReasoningGraphTool(BaseTool):
 
         return (
             f"Reasoning chain graph ({n} nodes, {e} edges, {ont} ontology concepts). "
-            f"ALL content is stored in English. "
-            f"This graph stores reusable fact reasoning patterns extracted from past "
-            f"conversation rounds — not specific data values, but general analytical "
-            f"approaches and inference chains that remain valuable across sessions. "
-            f"When facing a complex analytical problem, ALWAYS check this graph first "
-            f"to see if there are relevant reusable reasoning patterns before starting "
-            f"from scratch.\n\n"
-            f"Schema — ONLY these tables & columns exist; do NOT invent others:\n"
+            f"ALL content is in English. "
+            f"ONLY these tables & columns exist:\n"
             f"  Nodes: {', '.join(node_schemas) or '(none)'}\n"
-            f"  Edges: {', '.join(edge_schemas)}\n"
-            f"Input is a Cypher query."
+            f"  Edges: {', '.join(edge_schemas)}"
         )
 
     @staticmethod
