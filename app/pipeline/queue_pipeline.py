@@ -4,10 +4,16 @@ QueuePipeline uses an internal queue to decouple producers (nodes calling
 emit()) from consumers (dispatch loop). Consumers are dispatched concurrently
 via asyncio.gather so a slow consumer does not block others.
 """
+from __future__ import annotations
+
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.pipeline.abc import Consumable, EventConsumer
+
+if TYPE_CHECKING:
+    from app.node.base import AgentContext
+    from app.hook.registry import HookRegistry
 
 
 class QueuePipeline(Consumable):
@@ -31,12 +37,20 @@ class QueuePipeline(Consumable):
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=max_queue_size)
         self._consumers: list[EventConsumer] = []
         self._task: asyncio.Task | None = None
+        self._injected_hooks: HookRegistry | None = None
 
     # ------------------------------------------------------------------ #
     #  Lifecycle
     # ------------------------------------------------------------------ #
 
-    async def start(self) -> None:
+    async def start(self, ctx: AgentContext | None = None) -> None:
+        from app.hook.registry import OBSERVE_HOOK_POINTS
+
+        if ctx is not None:
+            self._injected_hooks = ctx.hooks
+            for c in self._consumers:
+                self._injected_hooks.register(c, whitelist=OBSERVE_HOOK_POINTS)
+
         for consumer in self._consumers:
             try:
                 await consumer.start()
@@ -58,6 +72,11 @@ class QueuePipeline(Consumable):
                 await consumer.stop()
             except Exception:
                 pass
+
+        if self._injected_hooks is not None:
+            for c in self._consumers:
+                self._injected_hooks.unregister(c)
+            self._injected_hooks = None
 
     # ------------------------------------------------------------------ #
     #  Dispatch
