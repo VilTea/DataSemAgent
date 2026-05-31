@@ -210,6 +210,12 @@ class ColumnTransformer:
         if not self._parser.is_metric(alias):
             return
 
+        # When the column comes from a CTE / subquery alias, the metric is
+        # already pre-computed — do NOT expand it.
+        if col.table and not col.table in self._known_datasets:
+            if col.table in ctx.table_alias_map:
+                return
+
         try:
             metric_expr = self._parser.resolve_metric(alias)
             parsed = sqlglot.parse_one(metric_expr)
