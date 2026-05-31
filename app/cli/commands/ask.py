@@ -18,6 +18,7 @@ async def run_ask(model_path: str, lang: str, console: Console) -> None:
     from app.tool.skill import create_skill_tool
     from app.tool.sql_exec import SqlExecTool
     from app.cli.console import RichConsumer
+    from app.eval.collector import EvalCollector
 
     i18n = I18nLoader(lang)
 
@@ -62,6 +63,7 @@ async def run_ask(model_path: str, lang: str, console: Console) -> None:
 
     pipeline = QueuePipeline()
     pipeline.register(RichConsumer(console))
+    pipeline.register(EvalCollector())
 
     from app.pipeline import EventConsumer
     class _TodoPanelConsumer(EventConsumer):
