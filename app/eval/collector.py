@@ -215,10 +215,9 @@ class EvalCollector(EventConsumer):
             return
         for t in self._pending_tools:
             if t["id"] == tool_call.id:
-                t["result"] = redact(
-                    result.model_dump(mode="json", exclude_none=True),
-                    self._redact_keys,
-                )
+                dumped = result.model_dump(mode="json", exclude_none=True)
+                dumped["success"] = result.is_success()
+                t["result"] = redact(dumped, self._redact_keys)
                 break
 
     # ── internal ──
