@@ -199,6 +199,18 @@ reflection_interval = 5   # trigger reasoning reflection every N turns
 
 ---
 
+## 📢 Recent Updates
+
+**Evaluation pipeline** — Non-intrusive conversation trace collection for model evaluation. `EvalCollector` uses consumer hooks to capture complete LLM I/O, tool calls, and tool results as JSONL, with configurable sensitive data redaction. See `config/eval.toml`.
+
+**Tool schema injection** — All four tools (`sql_exec`, `entity_graph`, `metric_lineage`, `reasoning_graph`) now inject schema definitions into the system prompt via `<tag>` blocks. The agent no longer needs to probe the graph to discover labels, properties, or relationships — everything is available upfront.
+
+**Consumer hook system** — `EventConsumer` implementations can use `@hook` annotations to observe agent lifecycle events (tool calls, LLM execution, flow boundaries). Hooks are observation-only (forced `on_error="log"`, priority 200) and auto-registered via `async with pipeline.bind(ctx)`.
+
+**SQL alias pushdown** — Fixed multiple alias precedence issues across CTEs, subqueries, plain columns, dimensions, and metrics. SQL aliases are now consistently preserved instead of being replaced by physical table names.
+
+---
+
 ## 📍 Status
 
 This is a **personal validation-stage project**, not a product:
