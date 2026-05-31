@@ -15,16 +15,7 @@ from app.schema import AgentCompletion, FinishReason
 
 # ── config ──
 
-def _eval_config() -> dict:
-    """Read [eval] section from config.toml."""
-    try:
-        import tomllib
-    except ImportError:
-        import tomli as tomllib
-    path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "config.toml")
-    with open(path, "rb") as f:
-        data = tomllib.load(f)
-    return data.get("eval", {})
+from app.config import config
 
 
 # ── redaction ──
@@ -143,12 +134,10 @@ class EvalCollector(EventConsumer):
     """
 
     def __init__(self):
-        cfg = _eval_config()
-        self._enabled = cfg.get("enabled", True)
-        self._output_dir = cfg.get("output_dir", "data/eval")
-        self._redact_keys = frozenset(
-            k.lower() for k in cfg.get("redact_keys", [])
-        )
+        cfg = config.eval["default"]
+        self._enabled = cfg.enabled
+        self._output_dir = cfg.output_dir
+        self._redact_keys = frozenset(k.lower() for k in cfg.redact_keys)
 
         self._session_id: str = ""
         self._file: Any = None

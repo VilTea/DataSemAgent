@@ -3,9 +3,3 @@ llm = "config/llm"        # LLM配置目录
 semantics = "config/semantics/tpcds_model_sqlite.yaml"        # 语义模型路径
 skills = "config/skills"  # 技能定义目录
 mcp = "config/mcp"       # MCP服务器配置目录
-
-[eval]
-enabled = true
-output_dir = "data/eval"
-redact_keys = ["api_key", "password", "token", "secret", "authorization",
-               "x-api-key", "bearer"]

@@ -113,6 +113,21 @@ class AgentSettings(BaseModel):
     load_priority: ClassVar[int] = 30
 
 
+@register_config
+class EvalSettings(BaseModel):
+    enabled: bool = Field(default=True, description="Enable evaluation data collection")
+    output_dir: str = Field(default="data/eval", description="JSONL output directory")
+    redact_keys: list[str] = Field(
+        default_factory=lambda: ["api_key", "password", "token", "secret", "authorization"],
+        description="Keys to redact from collected data",
+    )
+
+    setting_name: ClassVar[str] = "eval"
+    base_path: ClassVar[Path] = PROJECT_ROOT / "config" / "eval.toml"
+    file_type: ClassVar[tuple[str]] = ("toml",)
+    load_priority: ClassVar[int] = 10
+
+
 """ Database """
 
 class GraphDatabaseType(str, Enum):
