@@ -104,23 +104,8 @@ def _sync_write(f, line: str) -> None:
 # ── serialization ──
 
 def _serializable_messages(messages: list) -> list[dict]:
-    """Convert Message objects to plain dicts for JSON serialization."""
-    result = []
-    for m in messages:
-        d = {"role": m.role.value if hasattr(m.role, 'value') else str(m.role)}
-        if m.content:
-            d["content"] = m.content
-        if m.name:
-            d["name"] = m.name
-        if m.tool_calls:
-            d["tool_calls"] = [
-                {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
-                for tc in m.tool_calls
-            ]
-        if m.injected:
-            d["injected"] = True
-        result.append(d)
-    return result
+    """Convert Message objects to plain dicts, keeping ALL fields."""
+    return [m.model_dump(mode="json", exclude_none=True) for m in messages]
 
 
 # ── EvalCollector ──
@@ -131,6 +116,11 @@ class EvalCollector(EventConsumer):
     Uses @hook annotations (registered via QueuePipeline.start(ctx))
     to capture lifecycle data without modifying the agent flow.
     Writes one JSONL line per turn via run_in_executor for non-blocking I/O.
+
+    Turn boundary = STOP (not TOOL_CALLS).  A single user question may produce
+    multiple Agent→Tool→Agent cycles.  All LLM outputs and tool executions
+    within a turn are accumulated and flushed together when the agent finally
+    responds with finish_reason=STOP.
     """
 
     def __init__(self):
@@ -146,6 +136,7 @@ class EvalCollector(EventConsumer):
         self._msg_snapshot: int = 0
         self._turn_buffer: dict | None = None
         self._pending_tools: list[dict] = []
+        self._llm_outputs: list[dict] = []
 
     # ── EventConsumer ──
 
@@ -163,7 +154,7 @@ class EvalCollector(EventConsumer):
         if not self._enabled:
             return
         if isinstance(event, AgentCompletion):
-            self._on_llm_output(event)
+            await self._on_llm_output(event)
 
     # ── hooks ──
 
@@ -176,25 +167,35 @@ class EvalCollector(EventConsumer):
         os.makedirs(self._output_dir, exist_ok=True)
         path = os.path.join(self._output_dir, f"{self._session_id}.jsonl")
         self._file = await self._loop.run_in_executor(None, _open_file, path)
-        self._write_session_start(ctx)
+        # session_start line is written lazily in _on_llm_before —
+        # system_prompt is not yet available here (injected later by prep_async).
 
     @hook(HookPoint.NODE_EXEC_BEFORE)
-    def _on_llm_before(self, ctx, node) -> None:
+    async def _on_llm_before(self, ctx, node) -> None:
         if not self._enabled:
             return
+        # Lazy session_start: system_prompt is available from node now.
+        if self._turn_count == 0 and self._turn_buffer is None:
+            await self._write_session_start(ctx, node)
+
         delta = self._capture_messages_delta(ctx)
-        user_msg = ""
-        for m in reversed(delta):
-            if m.get("role") == "user" and not m.get("injected"):
-                user_msg = m.get("content", "")
-                break
-        self._turn_buffer = {
-            "type": "turn",
-            "turn": self._turn_count,
-            "user": user_msg,
-            "llm_input_delta": delta,
-        }
-        self._pending_tools = []
+        # Fresh turn: first NODE_EXEC_BEFORE after a STOP (or session start).
+        if self._turn_buffer is None:
+            user_msg = ""
+            for m in delta:
+                if m.get("role") == "user" and not m.get("injected"):
+                    user_msg = m.get("content", "")
+            self._turn_buffer = {
+                "type": "turn",
+                "turn": self._turn_count,
+                "user": user_msg,
+                "llm_input_delta": delta,
+            }
+            self._pending_tools = []
+            self._llm_outputs = []
+        else:
+            # Subsequent LLM call within the same turn (after tool results).
+            self._turn_buffer.setdefault("llm_input_delta", []).extend(delta)
 
     @hook(HookPoint.TOOL_BEFORE)
     async def _on_tool_before(self, ctx, tool_call, tool) -> None:
@@ -215,42 +216,49 @@ class EvalCollector(EventConsumer):
         for t in self._pending_tools:
             if t["id"] == tool_call.id:
                 t["result"] = redact(
-                    {
-                        "content": result.content,
-                        "success": getattr(result, "success", None),
-                    },
+                    result.model_dump(mode="json", exclude_none=True),
                     self._redact_keys,
                 )
                 break
 
     # ── internal ──
 
-    def _on_llm_output(self, event: AgentCompletion) -> None:
+    async def _on_llm_output(self, event: AgentCompletion) -> None:
         buf = self._turn_buffer
         if buf is None:
             return
         if event.finish_reason and event.finish_reason != FinishReason.NONE:
-            buf["llm_output"] = {
+            self._llm_outputs.append({
                 "content": event.full_content,
+                "reasoning_content": event.full_reasoning_content,
                 "tool_calls": [
-                    {"name": tc.function.name, "id": tc.id}
+                    {
+                        "name": tc.function.name,
+                        "id": tc.id,
+                        "arguments": tc.function.arguments,
+                    }
                     for tc in (event.full_tool_calls or [])
                 ],
                 "finish_reason": event.finish_reason.value,
-            }
-            buf["tool_calls"] = self._pending_tools
-            self._turn_count += 1
-            self._flush_turn(buf)
-            self._turn_buffer = None
-            self._pending_tools = []
+            })
+            if event.finish_reason == FinishReason.STOP:
+                buf["llm_outputs"] = self._llm_outputs
+                buf["tool_calls"] = self._pending_tools
+                self._turn_count += 1
+                await self._flush_turn(buf)
+                self._turn_buffer = None
+                self._pending_tools = []
+                self._llm_outputs = []
 
-    def _write_session_start(self, ctx) -> None:
+    async def _write_session_start(self, ctx, node) -> None:
         msgs = ctx.memory.messages if hasattr(ctx, 'memory') else []
         initial = _serializable_messages(msgs)
         self._msg_snapshot = len(msgs)
-        self._write_line({
+        sys_prompt = getattr(node, 'system_prompt', None) or ""
+        await self._write_line({
             "type": "session_start",
             "session_id": self._session_id,
+            "system_prompt": sys_prompt,
             "initial_messages": initial,
         })
 
@@ -260,11 +268,11 @@ class EvalCollector(EventConsumer):
         self._msg_snapshot = len(msgs)
         return _serializable_messages(delta)
 
-    def _flush_turn(self, buf: dict) -> None:
-        self._write_line(buf)
+    async def _flush_turn(self, buf: dict) -> None:
+        await self._write_line(buf)
 
-    def _write_line(self, obj: dict) -> None:
+    async def _write_line(self, obj: dict) -> None:
         if self._file is None or self._loop is None:
             return
         line = json.dumps(obj, ensure_ascii=False, default=str) + "\n"
-        self._loop.run_in_executor(None, _sync_write, self._file, line)
+        await self._loop.run_in_executor(None, _sync_write, self._file, line)
