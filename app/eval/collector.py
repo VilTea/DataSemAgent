@@ -30,16 +30,48 @@ def _eval_config() -> dict:
 # ── redaction ──
 
 def _is_sensitive_key(key: str, redact_keys: frozenset) -> bool:
-    """Exact segment match, case-insensitive."""
-    segments = re.split(r'[_.\-]', key.lower())
-    return any(s in redact_keys for s in segments)
+    """Check if a key matches any entry in redact_keys.
+
+    Three-tier matching (case-insensitive):
+    1. Full-key equality -- ``api_key`` matches ``api_key`` exactly.
+    2. Dotted-segment match -- ``auth.token.value`` matches ``token``.
+    3. Compound suffix match -- ``x-api-key`` matches ``api_key`` when both
+       are normalised (``_``/``-`` treated the same) and the sensitive key's
+       segments form the **trailing** segments of the input key.  This avoids
+       false positives such as ``api_key_v2`` or ``token_count``.
+    """
+    key_lower = key.lower()
+
+    # 1. Full-key exact match
+    if key_lower in redact_keys:
+        return True
+
+    # 2. Dotted-segment match (only ``.`` as separator)
+    if any(seg in redact_keys for seg in key_lower.split(".")):
+        return True
+
+    # 3. Compound key: normalise ``_``/``-`` and check trailing segments
+    input_segments = re.split(r"[_\-]", key_lower)
+    if len(input_segments) > 1:
+        for rk in redact_keys:
+            rk_lower = rk.lower()
+            # Only attempt segment matching for compound sensitive keys
+            rk_segments = re.split(r"[_\-]", rk_lower)
+            if len(rk_segments) > 1 and len(input_segments) >= len(rk_segments):
+                if input_segments[-len(rk_segments):] == rk_segments:
+                    return True
+
+    return False
 
 
 def _redact_value_patterns(text: str, redact_keys: frozenset) -> str:
     """Scan string values for key=value / key:value patterns and redact values."""
     for rk in redact_keys:
+        # Capture everything after ``key:`` / ``key=`` up to the next comma,
+        # semicolon, or end-of-string so that multi-word values (e.g.
+        # ``Authorisation: Bearer sk-abc123``) are fully redacted.
         pattern = re.compile(
-            rf'({re.escape(rk)})\s*[:=]\s*([^\s,;"]+)',
+            rf'({re.escape(rk)})\s*[:=]\s*([^,;]+)',
             re.IGNORECASE,
         )
         text = pattern.sub(r'\1=***', text)
