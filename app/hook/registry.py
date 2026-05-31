@@ -108,9 +108,10 @@ class HookRegistry:
         ]
 
     def _on_from_config(self, cfg: dict, callback: Callable, *, force_log: bool = False) -> None:
+        priority = 200 if force_log else cfg.get("priority", 100)
         self.on(
             cfg["point"], callback,
-            priority=cfg.get("priority", 100),
+            priority=priority,
             node_name=cfg.get("node_name"),
             node_type=cfg.get("node_type"),
             tool_name=cfg.get("tool_name"),

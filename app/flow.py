@@ -23,23 +23,27 @@ class AgentFlow(AsyncFlow):
         if context:
             self.context = context
 
-        await self.context.hooks.emit(HookPoint.FLOW_START, ctx=self.context)
-
         self.context.memory.add_message(Message.user_message(prompt))
 
-        try:
-            if self._pipeline is not None:
-                self.context._pipeline = self._pipeline
-                await self._pipeline.start(self.context)
+        if self._pipeline is not None:
+            self.context._pipeline = self._pipeline
+
+        async def _run() -> str:
+            await self.context.hooks.emit(HookPoint.FLOW_START, ctx=self.context)
             await asyncio.sleep(0)
             result = await self._run_async(self.context.get_shared())
             await asyncio.sleep(0)
             return result
-        finally:
-            if self._pipeline is not None:
-                await self._pipeline.stop()
-            self.context.turns += 1
-            await self.context.hooks.emit(HookPoint.FLOW_END, ctx=self.context)
+
+        if self._pipeline is not None:
+            async with self._pipeline.bind(self.context):
+                result = await _run()
+        else:
+            result = await _run()
+
+        self.context.turns += 1
+        await self.context.hooks.emit(HookPoint.FLOW_END, ctx=self.context)
+        return result
 
 
 def react_flow(

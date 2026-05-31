@@ -20,8 +20,12 @@ class EventConsumer(ABC):
     """
 
     @abstractmethod
-    async def start(self) -> None:
-        """Called before the pipeline begins dispatching events."""
+    async def start(self, ctx: Any | None = None) -> None:
+        """Called before the pipeline begins dispatching events.
+
+        *ctx* is an optional AgentContext — implementations may use it
+        to access the hook registry for registering consumer hooks.
+        """
         ...
 
     @abstractmethod
@@ -48,11 +52,42 @@ class Consumable(ABC):
           must not propagate to the caller or affect other consumers.
         - ``start()`` and ``stop()`` MUST call all registered consumers,
           even if some fail during the process.
+
+    Usage as context manager::
+
+        pipeline = QueuePipeline()
+        pipeline.register(foo)
+        async with pipeline.bind(ctx):
+            ...  # start/stop + hook lifecycle handled automatically
     """
 
+    def __init__(self) -> None:
+        self._bound_ctx: Any = None
+
+    def bind(self, ctx: Any) -> "Consumable":
+        """Bind to *ctx* and return self — ready for ``async with``."""
+        self._bound_ctx = ctx
+        return self
+
+    async def __aenter__(self) -> "Consumable":
+        await self.start(self._bound_ctx)
+        return self
+
+    async def __aexit__(self, *exc_info) -> None:
+        await self.stop()
+        self._bound_ctx = None
+
+    # ------------------------------------------------------------------ #
+    #  Abstract — subclasses MUST implement
+    # ------------------------------------------------------------------ #
+
     @abstractmethod
-    async def start(self) -> None:
-        """Start the pipeline and notify all registered consumers."""
+    async def start(self, ctx: Any | None = None) -> None:
+        """Start the pipeline and notify all registered consumers.
+
+        *ctx* is an optional AgentContext — implementations may use it
+        to access the hook registry for registering consumer hooks.
+        """
         ...
 
     @abstractmethod

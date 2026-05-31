@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from app.node.base import AgentContext
     from app.hook.registry import HookRegistry
 
+_SENTINEL = object()
+
 
 class QueuePipeline(Consumable):
     """Queue-driven pipeline with concurrent consumer dispatch.
@@ -34,6 +36,7 @@ class QueuePipeline(Consumable):
     """
 
     def __init__(self, max_queue_size: int = 0):
+        super().__init__()
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=max_queue_size)
         self._consumers: list[EventConsumer] = []
         self._task: asyncio.Task | None = None
@@ -60,7 +63,9 @@ class QueuePipeline(Consumable):
 
     async def stop(self) -> None:
         if self._task:
-            self._task.cancel()
+            # Send sentinel so the dispatch loop drains the queue and
+            # exits cleanly — never cancel while a consumer is mid-write.
+            await self._queue.put(_SENTINEL)
             try:
                 await self._task
             except asyncio.CancelledError:
@@ -86,20 +91,19 @@ class QueuePipeline(Consumable):
         await self._queue.put(event)
 
     async def _dispatch_loop(self) -> None:
-        try:
-            while True:
-                event = await self._queue.get()
-                if not self._consumers:
-                    continue
-                results = await asyncio.gather(
-                    *(self._safe_consume(c, event) for c in self._consumers),
-                    return_exceptions=True,
-                )
-                for consumer, result in zip(self._consumers, results):
-                    if isinstance(result, Exception):
-                        pass  # consumer error isolated
-        except asyncio.CancelledError:
-            pass
+        while True:
+            event = await self._queue.get()
+            if event is _SENTINEL:
+                return
+            if not self._consumers:
+                continue
+            results = await asyncio.gather(
+                *(self._safe_consume(c, event) for c in self._consumers),
+                return_exceptions=True,
+            )
+            for consumer, result in zip(self._consumers, results):
+                if isinstance(result, Exception):
+                    pass  # consumer error isolated
 
     @staticmethod
     async def _safe_consume(consumer: EventConsumer, event: Any) -> None:
