@@ -99,11 +99,13 @@ class FieldExpander:
                     # If the current source's dataset also defines this field, prefer the
                     # current source (handles duplicate field names across datasets).
                     # Otherwise use the field's actual dataset source — BUT only when
-                    # the current source is a base table.  When the current source is a
-                    # CTE / subquery the columns come from the derived table's output,
-                    # not from their original datasets, so we leave them unqualified.
+                    # that dataset is in scope.  Adding a table prefix for a dataset
+                    # not in FROM/JOIN produces wrong results (e.g. payments.card_scheme
+                    # on a FROM fees query).
                     if not self._current_source_has_field(ctx, field_name):
-                        if not self._is_current_source_cte(ctx):
+                        if (not self._is_current_source_cte(ctx)
+                                and mapping.dataset_name
+                                and ctx.get_table_alias(mapping.dataset_name) is not None):
                             try:
                                 table_ref = self._parser.get_dataset_source(mapping.dataset_name)
                             except Exception:

@@ -121,9 +121,13 @@ class ColumnTransformer:
                         # If the current source's dataset also defines this field,
                         # prefer it (handles duplicate field names across datasets).
                         # Otherwise use the field's actual dataset source — BUT only
-                        # when the current source is a base table (not a CTE/subquery).
+                        # when that dataset is in scope and current source is a base
+                        # table (not a CTE/subquery).  Adding a prefix for a dataset
+                        # not in FROM produces wrong results.
                         if not self._current_source_has_field_for(ctx, alias):
-                            if not self._is_current_source_cte(ctx):
+                            if (not self._is_current_source_cte(ctx)
+                                    and mapping.dataset_name
+                                    and ctx.get_table_alias(mapping.dataset_name) is not None):
                                 try:
                                     table_ref = self._parser.get_dataset_source(mapping.dataset_name)
                                 except Exception:
