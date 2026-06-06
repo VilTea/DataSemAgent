@@ -1,8 +1,8 @@
 """BenchmarkRunner — orchestrates DABstep tasks through the agent."""
 from __future__ import annotations
 
+import asyncio
 import json
-import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,9 +53,12 @@ class TaskResult:
 class BenchmarkRunner:
     """Runs DABstep tasks through the DataSemAgent and scores results."""
 
-    def __init__(self, context_dir: str, llm_config: str = "default"):
+    def __init__(self, context_dir: str, llm_config: str = "default",
+                 concurrency: int = 4):
         self._context_dir = context_dir
         self._llm_config = llm_config
+        self._concurrency = concurrency
+        self._report_lock = asyncio.Lock()
 
     async def run(
         self,
@@ -71,13 +74,21 @@ class BenchmarkRunner:
 
         report = BenchmarkReport()
         t0 = time.perf_counter()
+        sem = asyncio.Semaphore(self._concurrency)
 
-        for task in tasks:
-            result = await self._run_single(task, model, ground_truth)
-            report.results.append(result)
-            report.total_duration_ms = (time.perf_counter() - t0) * 1000
-            self._save_report(report)
+        async def _run_one(task: dict) -> TaskResult:
+            async with sem:
+                result = await self._run_single(task, model, ground_truth)
+                async with self._report_lock:
+                    report.results.append(result)
+                    report.total_duration_ms = (time.perf_counter() - t0) * 1000
+                    self._save_report(report)
+                return result
 
+        results = await asyncio.gather(*(_run_one(t) for t in tasks))
+        report.results.sort(key=lambda r: r.task_id)
+        report.total_duration_ms = (time.perf_counter() - t0) * 1000
+        self._save_report(report)
         return report
 
     def _save_report(self, report: BenchmarkReport) -> None:
@@ -107,7 +118,6 @@ class BenchmarkRunner:
         }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False, default=str)
-        print(f"Report saved to {path}")
 
     async def _run_single(
         self, task: dict, model, ground_truth: dict[int, str],
