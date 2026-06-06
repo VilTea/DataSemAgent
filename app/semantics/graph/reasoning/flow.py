@@ -60,7 +60,7 @@ async def _reflection_callback(ctx) -> None:
         return
     from app.config import config
     interval = config.agent["default"].reflection_interval
-    if ctx.turns % interval != 0:
+    if interval == 0 or ctx.turns % interval != 0:
         return
     await _do_reflection(ctx.memory)
 

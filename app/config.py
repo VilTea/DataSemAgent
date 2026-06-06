@@ -105,7 +105,7 @@ class MCPSettings(BaseModel):
 
 @register_config
 class AgentSettings(BaseModel):
-    reflection_interval: int = Field(default=10, ge=1, description="Trigger reasoning reflection every N turns")
+    reflection_interval: int = Field(default=10, ge=0, description="Trigger reflection every N turns. 0 disables reflection.")
 
     setting_name: ClassVar[str] = "agent"
     base_path: ClassVar[Path] = PROJECT_ROOT / "config" / "agent.toml"
