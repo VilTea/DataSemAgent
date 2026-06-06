@@ -45,7 +45,7 @@ class GraphSkeletonEngine:
                     continue
                 logical = field.name
                 dim_name = logical
-                dim_id = f"dim:{dim_name}"
+                dim_id = f"dim:{ds.name}.{dim_name}"
                 doc.add_node(
                     dim_id,
                     "Dimension",
@@ -169,7 +169,7 @@ class GraphSkeletonEngine:
                                 dim_name = logical
                                 doc.add_edge(
                                     f"metric:{metric.name}",
-                                    f"dim:{dim_name}",
+                                    f"dim:{ds_name}.{dim_name}",
                                     "SLICES_BY",
                                 )
                         break

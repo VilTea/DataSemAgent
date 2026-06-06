@@ -44,11 +44,12 @@ class BenchmarkConfig:
 
     @staticmethod
     def _load_benchmark_configs(global_config) -> None:
-        from app.config import ConfigLoader, AgentSettings, DatabaseSettings
+        from app.config import ConfigLoader, AgentSettings, DatabaseSettings, GraphDatabaseSettings
 
         for config_class, filename in [
             (DatabaseSettings, "database.toml"),
             (AgentSettings, "agent.toml"),
+            (GraphDatabaseSettings, "graph_database.toml"),
         ]:
             path = _BENCHMARK_CONFIG_ROOT / filename
             if not path.exists():

@@ -1,0 +1,6 @@
+[metric]
+type = "kuzu"
+driver = "kuzu"
+
+[metric.specific]
+path = "data/dabstep/metric_graph"

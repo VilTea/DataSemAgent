@@ -66,6 +66,11 @@ class BenchmarkRunner:
     ) -> BenchmarkReport:
         db_path = ensure_tables(self._context_dir)
         model = build_model()
+
+        # Build metric lineage graph once for all tasks.
+        from app.semantics.graph.init import _detect_or_init_metric_graph
+        await _detect_or_init_metric_graph(model)
+
         tasks = load_tasks(task_ids=task_ids, level=level, max_tasks=max_tasks)
         target_ids = {t["task_id"] for t in tasks}
         ground_truth = load_ground_truth(task_ids=target_ids)
@@ -135,14 +140,21 @@ class BenchmarkRunner:
             from app.node.agent import AgentNode
             from app.pipeline import QueuePipeline
             from app.eval.collector import EvalCollector
+            from app.semantics.graph.init_state import init_state
+            from app.tool.metric_graph import MetricGraphTool
 
             sql_tool = SqlExecTool(model_source=model, db_config_key="dabstep")
             answer_tool = SubmitAnswerTool()
+            metric_tool = MetricGraphTool()
+
+            tools = [sql_tool, answer_tool]
+            if metric_tool.is_available():
+                tools.append(metric_tool)
 
             agent = AgentNode(
                 name=self._llm_config,
                 system_prompt=_DABSTEP_SYSTEM_PROMPT,
-                tools=[sql_tool, answer_tool],
+                tools=tools,
             )
 
             captured: dict = {}
