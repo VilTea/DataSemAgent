@@ -1087,3 +1087,135 @@ class TestCTEAdvanced:
         # The last SELECT (outer query) should only have order_label, not the expansion
         last_select = "SELECT order_label AS order_label FROM cte2"
         assert last_select in result.physical_sql
+
+
+# =============================================================================
+# 场景14: 子查询作用域隔离
+# =============================================================================
+class TestSubqueryScopeIsolation:
+    """子查询内层表映射不应泄漏到外层"""
+
+    def test_dimension_no_table_in_outer_from_subquery(self):
+        """外层无表前缀的维度列 → 引用子查询输出列，不展开为物理表前缀"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT customer_id FROM (SELECT customer_id FROM orders) s"
+        )
+        # Outer should reference subquery alias, NOT original table
+        assert "s.customer_id" in result.physical_sql
+        assert "stg_orders.customer_id" not in result.physical_sql.split(") ")[-1]
+
+    def test_dimension_physical_alias_not_leaked(self):
+        """物理名不同于逻辑名的维度列 → 外层不泄漏物理名"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT status FROM (SELECT status FROM orders) s"
+        )
+        # Inner query should expand status→state
+        assert "stg_orders.state AS status" in result.physical_sql
+        # Outer should reference s.status, not stg_orders.state
+        assert "s.status AS status" in result.physical_sql
+        # The outer part (before the subquery) must not have stg_orders.state
+        outer_part = result.physical_sql.split(" FROM (SELECT ")[0]
+        assert "stg_orders.state" not in outer_part
+
+    def test_plain_field_no_table_in_outer_from_subquery(self):
+        """外层无表前缀的普通字段 → 引用子查询输出列"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT total_amount FROM (SELECT total_amount FROM orders) s"
+        )
+        assert "s.total_amount" in result.physical_sql
+
+    def test_nested_subquery_triple_level(self):
+        """三层嵌套子查询 → 每一层的作用域都隔离"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT customer_id FROM ("
+            "  SELECT customer_id FROM ("
+            "    SELECT customer_id FROM orders"
+            "  ) s2"
+            ") s1"
+        )
+        # Outermost should reference s1, not stg_orders or s2
+        assert "s1.customer_id" in result.physical_sql
+        # Middle should reference s2
+        assert "s2.customer_id" in result.physical_sql
+
+    def test_subquery_in_join_no_scope_leak(self):
+        """JOIN 中的子查询不污染外层作用域"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT o.customer_id, s.status "
+            "FROM orders o "
+            "JOIN (SELECT customer_id, status FROM customers) s "
+            "ON o.customer_id = s.customer_id"
+        )
+        # customers should NOT leak "customers" table alias into the outer
+        # scope via the subquery in JOIN.  The outer references use the
+        # "s" and "o" aliases.
+        assert "o.customer_id" in result.physical_sql
+        assert "s.customer_id" in result.physical_sql
+        assert "s.status" in result.physical_sql
+
+    def test_subquery_with_expression_not_expanded_in_outer(self):
+        """计算维度在子查询中展开，外层不重复展开表达式"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT order_label FROM (SELECT order_label FROM orders) s"
+        )
+        # The computed expression should appear exactly once (in the inner query)
+        needle = "order_id || ' - ' || total_amount"
+        assert result.physical_sql.count(needle) == 0
+        # Outer part must NOT contain stg_orders physical references
+        outer_part = result.physical_sql.split(" FROM (SELECT ")[0]
+        assert "stg_orders." not in outer_part
+
+    def test_subquery_with_cte_no_cross_pollution(self):
+        """CTE 内查询的表映射不污染外查询"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "WITH cte AS (SELECT customer_id FROM orders) "
+            "SELECT customer_id FROM cte"
+        )
+        # Outer SELECT should reference the CTE, not the original table
+        assert "customer_id AS customer_id FROM cte" in result.physical_sql
+        # stg_orders should only appear in the CTE definition, not the final SELECT
+        assert "FROM stg_orders" in result.physical_sql
+        assert "FROM stg_orders" not in result.physical_sql.rsplit("SELECT", 1)[-1]
+
+    def test_subquery_dimension_plain_column_outer(self):
+        """外层无表前缀维度列引用子查询 → 正确引用子查询别名"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT region FROM (SELECT region FROM customers) c"
+        )
+        # Outer query must reference subquery alias, not original table
+        assert "c.region AS region" in result.physical_sql
+        # The outer SELECT should not have stg_customers directly
+        outer_select = "SELECT c.region AS region FROM ("
+        assert outer_select in result.physical_sql

@@ -111,9 +111,16 @@ class SubqueryHandler:
                     }
                 )
             subquery = source.this
+            # Isolate inner query — table aliases and current source
+            # must not leak to the outer scope (same as transform_subquery).
+            saved_map = dict(ctx.table_alias_map)
+            saved_source = ctx.get_current_source()
             ctx.push_scope()
             self._on_transform_select(subquery, ctx)
             ctx.pop_scope()
+            ctx.table_alias_map = saved_map
+            if saved_source is not None:
+                ctx.set_current_source(saved_source)
             if source.alias:
                 ctx.set_table_alias(source.alias, source.alias)
         elif isinstance(source, exp.Table):

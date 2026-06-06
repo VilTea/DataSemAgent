@@ -76,6 +76,9 @@ class SQLTranslator:
         
         self._subquery_handler.resolve_sources(select, ctx)
 
+        self._clause_transformer.transform_from(select, ctx)
+        self._clause_transformer.transform_joins(select, ctx)
+
         from_clause = select.args.get("from_")
         if from_clause and from_clause.this:
             table = from_clause.this
@@ -86,9 +89,6 @@ class SQLTranslator:
             else:
                 table_name = table.alias or table.name
                 self._scope_mgr.set_current_source(ctx, table_name)
-
-        self._clause_transformer.transform_from(select, ctx)
-        self._clause_transformer.transform_joins(select, ctx)
 
         self._transform_select_list(select, ctx)
         self._clause_transformer.transform_where(select, ctx)
