@@ -21,12 +21,10 @@ from .tool import SubmitAnswerTool
 _DABSTEP_SYSTEM_PROMPT = """\
 You are a financial data analyst. Answer the question using the available data.
 
-Use sql_exec to query the database. The database contains:
-- payments: transaction records
-- fees: fee schedules
-- merchants: merchant metadata
-- mcc_codes: merchant category codes
-- acquirer_countries: country codes
+Use sql_exec to query the database. Use ONLY the EXACT field names from
+<sql_schema> in the system prompt — raw column names from the database
+will be REJECTED by the translator.  Dataset names are: payments, fees,
+merchants, mcc_codes, acquirer_countries.
 
 When you have the final answer, call submit_answer with the appropriate
 answer_type. Read the task guidelines carefully to choose the right format.
