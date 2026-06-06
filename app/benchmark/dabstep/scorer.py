@@ -28,7 +28,12 @@ def _normalize_number(raw: str) -> str:
     nums = re.findall(r"[-+]?\d*\.?\d+", raw)
     if not nums:
         return raw
-    return nums[-1]
+    val = float(nums[-1])
+    if val == int(val):
+        return str(int(val))
+    # Strip trailing zeros: 2.50 -> 2.5, 73.150 -> 73.15
+    s = f"{val:.10f}".rstrip("0").rstrip(".")
+    return s
 
 
 def _normalize_list(raw: str) -> str:
