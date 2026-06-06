@@ -1,0 +1,6 @@
+[dabstep]
+type = "sqlite"
+driver = "aiosqlite"
+
+[dabstep.specific]
+path = "data/dabstep/benchmark.db"
