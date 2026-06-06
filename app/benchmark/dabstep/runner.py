@@ -151,6 +151,11 @@ class BenchmarkRunner:
                 captured["raw"] = result.content
 
             collector = EvalCollector()
+            collector.set_metadata({
+                "task_id": task["task_id"],
+                "question": task["question"],
+                "level": task.get("level", ""),
+            })
             pipeline = QueuePipeline()
             pipeline.register(collector)
 
