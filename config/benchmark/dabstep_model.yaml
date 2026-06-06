@@ -135,6 +135,36 @@ semantic_model:
       description: Refused
       dimension:
         is_time: false
+    - name: email_address
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: email_address
+      description: Email address
+    - name: ip_address
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: ip_address
+      description: IP address
+    - name: card_number
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: card_number
+      description: Card number
+    - name: card_bin
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: card_bin
+      description: Card BIN
+    - name: minute_of_hour
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: minute_of_hour
+      description: Minute of hour
   - name: fees
     source: fees
     description: Fee schedules
@@ -201,6 +231,26 @@ semantic_model:
         - dialect: ANSI_SQL
           expression: intracountry
       description: Intra-country
+    - name: capture_delay
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: capture_delay
+      description: Capture delay
+      dimension:
+        is_time: false
+    - name: monthly_fraud_level
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: monthly_fraud_level
+      description: Monthly fraud level
+    - name: monthly_volume
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: monthly_volume
+      description: Monthly transaction volume
   - name: merchants
     source: merchants
     description: Merchant metadata
