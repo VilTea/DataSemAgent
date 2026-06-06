@@ -138,11 +138,8 @@ class BenchmarkRunner:
 
             captured: dict = {}
 
-            def _on_answer(ctx, tool_call, tool, res):
-                captured["raw"] = res.content
-                captured["session_id"] = getattr(
-                    ctx.memory, "_eval_session_id", ""
-                ) if hasattr(ctx, 'memory') else ""
+            def _on_answer(ctx, tool_call, tool, result):
+                captured["raw"] = result.content
 
             collector = EvalCollector()
             pipeline = QueuePipeline()
