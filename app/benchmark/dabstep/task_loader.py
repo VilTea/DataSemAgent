@@ -66,4 +66,6 @@ def _infer_answer_type(guidelines: str) -> str:
         return "list"
     if "number" in g or "decimal" in g:
         return "number"
+    if "yes or no" in g or "yes/no" in g:
+        return "text"
     return "not_applicable"

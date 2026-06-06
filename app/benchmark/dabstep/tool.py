@@ -9,9 +9,10 @@ class SubmitAnswerTool(BaseTool):
     permission: Literal["global", "skills", "agent"] = "agent"
     name: str = "submit_answer"
     description: str = (
-        "Submit the final answer for the task. "
-        "Call this ONCE when you have completed all analysis. "
-        "Choose the answer_type based on the task guidelines."
+        "Submit the final answer for the task. Call ONCE when analysis is complete. "
+        "answer_type: 'number' for numeric, 'list' for comma-separated values, "
+        "'grouped_list' for group:value pairs, 'text' for free-text (yes/no etc), "
+        "'not_applicable' when no answer applies."
     )
     strict: bool = True
     parameters: dict = {
@@ -19,7 +20,7 @@ class SubmitAnswerTool(BaseTool):
         "properties": {
             "answer_type": {
                 "type": "string",
-                "enum": ["number", "list", "grouped_list", "not_applicable"],
+                "enum": ["number", "list", "grouped_list", "text", "not_applicable"],
                 "description": "Expected answer format per the task guidelines",
             },
             "number_value": {
@@ -27,8 +28,7 @@ class SubmitAnswerTool(BaseTool):
                 "description": "Required when answer_type='number'.",
             },
             "list_value": {
-                "type": "array",
-                "items": {"type": "string"},
+                "type": "array", "items": {"type": "string"},
                 "description": "Required when answer_type='list'.",
             },
             "grouped_value": {
@@ -42,6 +42,10 @@ class SubmitAnswerTool(BaseTool):
                     "required": ["group", "value"],
                 },
                 "description": "Required when answer_type='grouped_list'.",
+            },
+            "text_value": {
+                "type": "string",
+                "description": "Required when answer_type='text'. Free-text (yes/no, name, etc).",
             },
         },
         "required": ["answer_type"],
@@ -78,10 +82,19 @@ class SubmitAnswerTool(BaseTool):
             lines = [f"{g['group']}: {g['value']}" for g in val]
             return ToolResult.success_response(tool_call.id, self.name, "; ".join(lines))
 
+        if atype == "text":
+            val = args.get("text_value", "")
+            if not val:
+                return ToolResult.failure_response(
+                    tool_call.id, self.name,
+                    "answer_type='text' but text_value is missing or empty."
+                )
+            return ToolResult.success_response(tool_call.id, self.name, val)
+
         if atype == "not_applicable":
             return ToolResult.success_response(tool_call.id, self.name, "Not Applicable")
 
         return ToolResult.failure_response(
             tool_call.id, self.name,
-            f"Unknown answer_type '{atype}'. Must be: number, list, grouped_list, not_applicable."
+            f"Unknown answer_type '{atype}'. Must be: number, list, grouped_list, text, not_applicable."
         )

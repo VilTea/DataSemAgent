@@ -150,7 +150,8 @@ class BenchmarkRunner:
                 HookPoint.TOOL_AFTER, _on_answer,
                 tool_name="submit_answer", on_error="log",
             )
-            await flow.ask(task["question"])
+            question = f"{task['question']}\n\n[Answer format: {task['guidelines']}]"
+            await flow.ask(question)
 
             result.predicted = captured.get("raw", "")
             result.trace_file = getattr(collector, "_session_id", "")
