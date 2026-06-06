@@ -12,7 +12,7 @@ from app.tool.sql_exec import SqlExecTool
 from .db import ensure_tables
 from .model import build_model
 from .scorer import score
-from .task_loader import load_tasks, load_ground_truth
+from .task_loader import load_tasks
 from .tool import SubmitAnswerTool
 
 _DABSTEP_SYSTEM_PROMPT = """\
@@ -58,7 +58,8 @@ class BenchmarkRunner:
         db_path = ensure_tables(self._context_dir)
         model = build_model()
         tasks = load_tasks(task_ids=task_ids, level=level, max_tasks=max_tasks)
-        ground_truth = load_ground_truth()
+        # task_scores is 936K rows — skip download, score manually later.
+        ground_truth: dict[int, str] = {}
 
         report = BenchmarkReport()
         t0 = time.perf_counter()
@@ -91,15 +92,15 @@ class BenchmarkRunner:
             answer_tool = SubmitAnswerTool()
 
             agent = AgentNode(
-                name="dabstep-agent",
+                name=self._llm_config,
                 system_prompt=_DABSTEP_SYSTEM_PROMPT,
                 tools=[sql_tool, answer_tool],
             )
 
             captured: dict = {}
 
-            def _on_answer(ctx, tool_call, tool, tool_result):
-                captured["raw"] = tool_result.content
+            def _on_answer(ctx, tool_call, tool, result):
+                captured["raw"] = result.content
 
             pipeline = QueuePipeline()
             pipeline.register(EvalCollector())
@@ -114,7 +115,7 @@ class BenchmarkRunner:
                 await flow._run_async(flow.context.get_shared())
 
             result.predicted = captured.get("raw", "")
-            if result.predicted:
+            if result.predicted and result.expected:
                 result.passed = score(
                     result.predicted, result.expected,
                     task.get("answer_type", "number"),

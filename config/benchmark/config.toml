@@ -1,2 +1,3 @@
 [paths]
 semantics = "config/benchmark/dabstep_model.yaml"
+llm = "config/llm"

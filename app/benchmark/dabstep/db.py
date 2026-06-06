@@ -33,19 +33,23 @@ def ensure_tables(context_dir: str) -> str:
     return str(_DB_PATH)
 
 
-def _infer_type(values: list[str]) -> str:
+def _infer_type(values: list) -> str:
     for v in values:
         if v is None or v == "":
+            continue
+        if isinstance(v, (list, dict)):
+            return "TEXT"
+        if isinstance(v, bool):
             continue
         try:
             int(v)
             continue
-        except ValueError:
+        except (ValueError, TypeError):
             pass
         try:
             float(v)
             return "REAL"
-        except ValueError:
+        except (ValueError, TypeError):
             return "TEXT"
     return "INTEGER"
 
@@ -101,6 +105,10 @@ def _schema_from_rows(rows: list[dict]) -> tuple[list[str], list[str]]:
 def _coerce(value: Any, sql_type: str) -> Any:
     if value is None or value == "":
         return None
+    if isinstance(value, (list, dict)):
+        return json.dumps(value)
+    if isinstance(value, bool):
+        return int(value)
     if sql_type == "INTEGER":
         try:
             return int(value)

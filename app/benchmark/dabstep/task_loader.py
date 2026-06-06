@@ -44,14 +44,17 @@ def load_ground_truth(split: str = "default") -> dict[int, str]:
     except ImportError:
         raise ImportError("datasets library required. pip install datasets")
 
-    ds = load_dataset("adyen/DABstep", name="task_scores", split=split)
-    gt: dict[int, str] = {}
-    for row in ds:
-        tid = int(row.get("task_id", 0))
-        answer = row.get("answer", "")
-        if tid and answer:
-            gt[tid] = str(answer)
-    return gt
+    try:
+        ds = load_dataset("adyen/DABstep", name="task_scores", split=split)
+        gt: dict[int, str] = {}
+        for row in ds:
+            tid = int(row.get("task_id", 0))
+            answer = row.get("answer", "")
+            if tid and answer:
+                gt[tid] = str(answer)
+        return gt
+    except Exception:
+        return {}
 
 
 def _infer_answer_type(guidelines: str) -> str:
