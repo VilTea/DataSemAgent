@@ -97,6 +97,10 @@ class ColumnTransformer:
             parsed = sqlglot.parse_one(col_name, dialect=None)
             if isinstance(parsed, exp.Column):
                 col_name = parsed.name
+            else:
+                # Expression alias (e.g. COUNT(...) AS cnt) — not a
+                # simple column; keep the alias reference for ORDER BY.
+                return
             col.set("this", exp.to_identifier(col_name))
             return
 
