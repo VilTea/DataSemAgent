@@ -1,0 +1,330 @@
+version: 0.1.1
+semantic_model:
+- name: dabstep_financial_model
+  description: DABstep benchmark financial payment analytics
+  ai_context:
+    instructions: Fee amounts are computed as fixed_amount + rate * transaction_value / 10000
+  datasets:
+  - name: payments
+    source: payments
+    description: Payment transaction records
+    primary_key:
+    - psp_reference
+    fields:
+    - name: transaction_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: psp_reference
+      description: Payment reference
+    - name: merchant_name
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: merchant
+      description: Merchant
+      dimension:
+        is_time: false
+    - name: card_scheme
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: card_scheme
+      description: Card scheme
+      dimension:
+        is_time: false
+    - name: year
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: year
+      description: Year
+      dimension:
+        is_time: true
+    - name: hour_of_day
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: hour_of_day
+      description: Hour
+      dimension:
+        is_time: true
+    - name: day_of_year
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: day_of_year
+      description: Day of year
+      dimension:
+        is_time: true
+    - name: is_credit
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: is_credit
+      description: Credit/debit
+      dimension:
+        is_time: false
+    - name: transaction_amount
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: eur_amount
+      description: Amount in euros
+    - name: ip_country
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: ip_country
+      description: IP country
+      dimension:
+        is_time: false
+    - name: issuing_country
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: issuing_country
+      description: Issuing country
+      dimension:
+        is_time: false
+    - name: device_type
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: device_type
+      description: Device
+      dimension:
+        is_time: false
+    - name: shopper_interaction
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: shopper_interaction
+      description: Shopper interaction
+      dimension:
+        is_time: false
+    - name: aci
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: aci
+      description: ACI code
+      dimension:
+        is_time: false
+    - name: acquirer_country
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: acquirer_country
+      description: Acquirer country
+      dimension:
+        is_time: false
+    - name: has_fraudulent_dispute
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: has_fraudulent_dispute
+      description: Fraud dispute
+      dimension:
+        is_time: false
+    - name: is_refused
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: is_refused_by_adyen
+      description: Refused
+      dimension:
+        is_time: false
+  - name: fees
+    source: fees
+    description: Fee schedules
+    primary_key:
+    - ID
+    fields:
+    - name: fee_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: ID
+      description: Fee ID
+      dimension:
+        is_time: false
+    - name: fee_card_scheme
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: card_scheme
+      description: Card scheme
+      dimension:
+        is_time: false
+    - name: fixed_amount
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: fixed_amount
+      description: Fixed fee EUR
+    - name: rate
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: rate
+      description: Fee rate bps
+    - name: fee_account_type
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: account_type
+      description: Account types
+    - name: fee_mcc
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: merchant_category_code
+      description: MCC codes
+    - name: fee_is_credit
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: is_credit
+      description: Credit flag
+      dimension:
+        is_time: false
+    - name: fee_aci
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: aci
+      description: ACI codes
+    - name: intracountry
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: intracountry
+      description: Intra-country
+  - name: merchants
+    source: merchants
+    description: Merchant metadata
+    primary_key:
+    - merchant
+    fields:
+    - name: merchant_name
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: merchant
+      description: Merchant
+      dimension:
+        is_time: false
+    - name: merchant_mcc
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: merchant_category_code
+      description: MCC
+      dimension:
+        is_time: false
+    - name: merchant_account_type
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: account_type
+      description: Account type
+      dimension:
+        is_time: false
+    - name: merchant_acquirer
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: acquirer
+      description: Acquirers
+    - name: merchant_capture_delay
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: capture_delay
+      description: Capture delay
+      dimension:
+        is_time: false
+  - name: mcc_codes
+    source: mcc_codes
+    description: MCC descriptions
+    primary_key:
+    - mcc
+    fields:
+    - name: mcc
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: mcc
+      description: MCC
+      dimension:
+        is_time: false
+    - name: mcc_description
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: description
+      description: Description
+  - name: acquirer_countries
+    source: acquirer_countries
+    description: Acquirer countries
+    fields:
+    - name: acquirer_name
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: acquirer
+      description: Acquirer
+      dimension:
+        is_time: false
+    - name: country_code
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: country_code
+      description: Country code
+      dimension:
+        is_time: false
+  relationships:
+  - name: payment_to_merchant
+    from: payments
+    to: merchants
+    from_columns:
+    - merchant_name
+    to_columns:
+    - merchant_name
+  - name: merchant_to_mcc
+    from: merchants
+    to: mcc_codes
+    from_columns:
+    - merchant_mcc
+    to_columns:
+    - mcc
+  - name: payment_to_acquirer
+    from: payments
+    to: acquirer_countries
+    from_columns:
+    - acquirer_country
+    to_columns:
+    - acquirer_name
+  metrics:
+  - name: total_transactions
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: COUNT(*)
+  - name: total_amount
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: SUM(payments.eur_amount)
+  - name: avg_transaction_amount
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: AVG(payments.eur_amount)
+  - name: total_fees
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: SUM(fees.fixed_amount + fees.rate * payments.eur_amount / 10000)
