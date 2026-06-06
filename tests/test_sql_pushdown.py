@@ -1219,3 +1219,113 @@ class TestSubqueryScopeIsolation:
         # The outer SELECT should not have stg_customers directly
         outer_select = "SELECT c.region AS region FROM ("
         assert outer_select in result.physical_sql
+
+
+# =============================================================================
+# 场景15: ORDER BY 别名引用 — 聚合表达式别名不应被展开
+# =============================================================================
+class TestOrderByAlias:
+    """ORDER BY 引用 SELECT 列表别名时不应展开为物理表达式"""
+
+    def test_order_by_aggregate_alias_kept(self):
+        """ORDER BY 引用 COUNT 别名 — 保持别名，不展开为 COUNT(...) 字符串"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT customer_id, COUNT(order_id) AS cnt "
+            "FROM orders "
+            "GROUP BY customer_id "
+            "ORDER BY cnt DESC"
+        )
+        # Must keep 'cnt' in ORDER BY, not expand to COUNT(stg_orders.order_id) AS cnt
+        assert "ORDER BY cnt DESC" in result.physical_sql
+        assert "COUNT(" not in result.physical_sql.rsplit("ORDER BY", 1)[-1]
+
+    def test_order_by_sum_alias_kept(self):
+        """ORDER BY 引用 SUM 别名 — 保持别名"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT customer_id, SUM(total_amount) AS total "
+            "FROM orders "
+            "GROUP BY customer_id "
+            "ORDER BY total DESC "
+            "LIMIT 5"
+        )
+        assert "ORDER BY total DESC" in result.physical_sql
+
+    def test_order_by_multiple_aggregate_aliases(self):
+        """ORDER BY 多个聚合别名 — 各自保持"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT customer_id, COUNT(order_id) AS cnt, SUM(total_amount) AS total "
+            "FROM orders "
+            "GROUP BY customer_id "
+            "ORDER BY cnt DESC, total ASC"
+        )
+        assert "ORDER BY cnt DESC, total ASC" in result.physical_sql
+        assert "COUNT(" not in result.physical_sql.rsplit("GROUP BY", 1)[-1]
+
+    def test_order_by_dimension_alias_still_strips_table(self):
+        """ORDER BY 引用维度别名 — 仍去除表前缀，保留列名"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT customer_id AS cid FROM orders ORDER BY cid"
+        )
+        # Dimension alias: should strip table prefix but keep the column name
+        assert "ORDER BY customer_id" in result.physical_sql
+
+    def test_order_by_avg_alias_kept(self):
+        """ORDER BY 引用 AVG 别名 — 保持别名"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT customer_id, AVG(total_amount) AS avg_amt "
+            "FROM orders "
+            "GROUP BY customer_id "
+            "ORDER BY avg_amt"
+        )
+        assert "ORDER BY avg_amt" in result.physical_sql
+
+    def test_order_by_alias_with_where(self):
+        """ORDER BY 聚合别名 + WHERE 条件 — 别名不变"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT customer_id, COUNT(order_id) AS cnt "
+            "FROM orders "
+            "WHERE order_date > 1 "
+            "GROUP BY customer_id "
+            "ORDER BY cnt DESC"
+        )
+        assert "ORDER BY cnt DESC" in result.physical_sql
+
+    def test_order_by_alias_with_limit(self):
+        """ORDER BY 聚合别名 + LIMIT — 别名不变，物理 SQL 可执行"""
+        model = create_test_semantic_model()
+        parser = OSIModelParser(model)
+        translator = SQLTranslator(parser)
+
+        result = translator.translate(
+            "SELECT customer_id, COUNT(order_id) AS cnt "
+            "FROM orders "
+            "GROUP BY customer_id "
+            "ORDER BY cnt DESC "
+            "LIMIT 1"
+        )
+        assert "ORDER BY cnt DESC" in result.physical_sql
+        assert "LIMIT 1" in result.physical_sql
