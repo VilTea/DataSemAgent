@@ -3,7 +3,15 @@ semantic_model:
 - name: dabstep_financial_model
   description: DABstep benchmark financial payment analytics
   ai_context:
-    instructions: Fee amounts are computed as fixed_amount + rate * transaction_value / 10000
+    instructions: |-
+      Fee amounts are computed as: fixed_amount + rate * transaction_value / 10000.
+      Fees table JOIN with payments: match on card_scheme, is_credit, and optionally
+      on account_type (JSON array field fee_account_type), merchant_category_code
+      (JSON array field fee_mcc), capture_delay, monthly_fraud_level, monthly_volume,
+      intracountry, aci.  A fee schedule applies when ALL its non-null attributes
+      match the corresponding payment/merchant attribute.
+      Shopper identity is determined by email_address (primary) or card_number (fallback).
+      has_fraudulent_dispute uses string values 'True'/'False'.
   datasets:
   - name: payments
     source: payments
@@ -55,6 +63,22 @@ semantic_model:
         - dialect: ANSI_SQL
           expression: day_of_year
       description: Day of year
+      dimension:
+        is_time: true
+    - name: quarter
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: (CAST(day_of_year AS INTEGER) - 1) / 91 + 1
+      description: Quarter (1-4) derived from day of year
+      dimension:
+        is_time: true
+    - name: month
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: (CAST(day_of_year AS INTEGER) - 1) / 30 + 1
+      description: Month (1-12) approximated from day of year
       dimension:
         is_time: true
     - name: is_credit
@@ -140,7 +164,8 @@ semantic_model:
         dialects:
         - dialect: ANSI_SQL
           expression: email_address
-      description: Email address
+      description: Email address (primary shopper identifier)
+      label: Shopper Identifier
     - name: ip_address
       expression:
         dialects:
@@ -378,3 +403,15 @@ semantic_model:
       dialects:
       - dialect: ANSI_SQL
         expression: SUM(fees.fixed_amount + fees.rate * payments.eur_amount / 10000)
+  - name: fraud_rate
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: CAST(SUM(CASE WHEN payments.has_fraudulent_dispute = 'True' THEN 1 ELSE 0 END) AS REAL) * 100.0 / COUNT(*)
+    description: Fraud rate as percentage (0-100)
+  - name: unique_shoppers
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: COUNT(DISTINCT payments.email_address)
+    description: Unique shoppers identified by email address
