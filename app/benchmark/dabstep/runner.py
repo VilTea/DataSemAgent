@@ -75,9 +75,9 @@ class BenchmarkRunner:
         for task in tasks:
             result = await self._run_single(task, model, ground_truth)
             report.results.append(result)
+            report.total_duration_ms = (time.perf_counter() - t0) * 1000
+            self._save_report(report)
 
-        report.total_duration_ms = (time.perf_counter() - t0) * 1000
-        self._save_report(report)
         return report
 
     def _save_report(self, report: BenchmarkReport) -> None:
