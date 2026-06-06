@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.benchmark.base import BenchmarkReport
 from app.hook import HookPoint
 from app.tool.sql_exec import SqlExecTool
 
@@ -39,24 +40,6 @@ class TaskResult:
     passed: bool = False
     duration_ms: float = 0
     error: str = ""
-
-
-@dataclass
-class BenchmarkReport:
-    results: list[TaskResult] = field(default_factory=list)
-    total_duration_ms: float = 0
-
-    @property
-    def passed(self) -> int:
-        return sum(1 for r in self.results if r.passed)
-
-    @property
-    def total(self) -> int:
-        return len(self.results)
-
-    @property
-    def accuracy(self) -> float:
-        return self.passed / self.total if self.total > 0 else 0.0
 
 
 class BenchmarkRunner:
