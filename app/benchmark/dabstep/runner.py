@@ -149,13 +149,11 @@ class BenchmarkRunner:
             pipeline.register(collector)
 
             flow = react_flow(agent_node=agent, pipeline=pipeline)
-            async with pipeline.bind(flow.context):
-                flow.context.hooks.on(
-                    HookPoint.TOOL_AFTER, _on_answer,
-                    tool_name="submit_answer", on_error="log",
-                )
-                await flow.context.hooks.emit(HookPoint.FLOW_START, ctx=flow.context)
-                await flow._run_async(flow.context.get_shared())
+            flow.context.hooks.on(
+                HookPoint.TOOL_AFTER, _on_answer,
+                tool_name="submit_answer", on_error="log",
+            )
+            await flow.ask(task["question"])
 
             result.predicted = captured.get("raw", "")
             result.trace_file = getattr(collector, "_session_id", "")
