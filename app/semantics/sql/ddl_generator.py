@@ -12,12 +12,16 @@ from app.semantics.models import (
 
 # OSI SQL rules (embedded in DDL prompt)
 OSI_SQL_RULES = """-- [OSI SQL Rules]
--- Dimension columns ([DIMENSION]): use in GROUP BY / WHERE / ORDER BY.
--- Metric columns ([METRIC]): already aggregated — DO NOT re-aggregate! Use HAVING to filter.
---   When using metric columns, all dimension columns MUST be in GROUP BY.
--- Time dimensions (is_time=true): support time-series analysis.
--- Fields=scalar | DIMENSION=dimension | Metrics=aggregation (SUM/COUNT/AVG).
--- JOIN: when a metric column references a JOIN requirement, it MUST be followed!
+-- DIMENSION columns: use in GROUP BY / WHERE / ORDER BY.
+-- METRIC columns: pre-computed aggregates (SUM/COUNT/AVG).  Use them directly
+--   as SELECT expressions — do NOT wrap them in SUM(), AVG(), etc.
+--   To get per-group metric values, add dimensions to GROUP BY:
+--     SELECT merchant_name, fraud_rate FROM payments GROUP BY merchant_name
+--   The metric is automatically computed per group.  This is NOT re-aggregation.
+--   Use HAVING (not WHERE) to filter on metric values.
+-- TIME_DIMENSION columns: support time-series filtering and grouping.
+-- JOIN requirements: if a metric comment says "requires JOIN with X",
+--   you MUST add that JOIN to the FROM clause.
 -- **Violating any rule is forbidden!!**
 
 -- [[After writing SQL, check each rule — the SQL MUST fully comply!]]"""
