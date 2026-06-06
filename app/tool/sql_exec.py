@@ -191,10 +191,16 @@ class SqlExecTool(BaseTool):
 
     def _humanize_error(self, error_message: str) -> str:
         """Translate physical identifiers in an error message to logical names."""
+        import re
         msg = error_message
         for physical, logical in self._physical_to_logical.items():
-            if physical in msg:
-                msg = msg.replace(physical, logical)
+            if physical == logical:
+                continue  # skip identity mappings that cause cascade bugs
+            if physical not in msg:
+                continue
+            # Use word-boundary replacement to avoid cascading:
+            # 'description' in 'mc.mcc_description' → 'mc.mcc_mcc_description'
+            msg = re.sub(rf'\b{re.escape(physical)}\b', logical, msg)
         return msg
 
     @staticmethod
