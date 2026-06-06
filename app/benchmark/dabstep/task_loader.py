@@ -37,21 +37,41 @@ def load_tasks(
     return tasks
 
 
-def load_ground_truth(split: str = "default") -> dict[int, str]:
-    """Load ground-truth answers, returning {task_id: answer_string}."""
+def load_ground_truth(
+    task_ids: set[int] | None = None,
+    max_scan: int = 200000,
+) -> dict[int, str]:
+    """Load ground-truth answers by scanning task_scores stream.
+
+    DABstep keeps ground truth private; we find correct answers by locating
+    rows with ``score=True`` for each *task_id*.
+    """
     try:
         from datasets import load_dataset
     except ImportError:
-        raise ImportError("datasets library required. pip install datasets")
+        return {}
+
+    target = task_ids or set()
+    if not target:
+        return {}
 
     try:
-        ds = load_dataset("adyen/DABstep", name="task_scores", split=split)
+        ds = load_dataset("adyen/DABstep", name="task_scores",
+                          split="default", streaming=True)
         gt: dict[int, str] = {}
-        for row in ds:
+        for i, row in enumerate(ds):
+            if i >= max_scan:
+                break
             tid = int(row.get("task_id", 0))
-            answer = row.get("answer", "")
-            if tid and answer:
-                gt[tid] = str(answer)
+            if tid not in target or tid in gt:
+                continue
+            score_val = row.get("score")
+            if str(score_val).lower() == "true":
+                answer = str(row.get("agent_answer", ""))
+                if answer:
+                    gt[tid] = answer
+                    if len(gt) >= len(target):
+                        break
         return gt
     except Exception:
         return {}

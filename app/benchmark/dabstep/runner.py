@@ -15,7 +15,7 @@ from app.tool.sql_exec import SqlExecTool
 from .db import ensure_tables
 from .model import build_model
 from .scorer import score
-from .task_loader import load_tasks
+from .task_loader import load_tasks, load_ground_truth
 from .tool import SubmitAnswerTool
 
 _DABSTEP_SYSTEM_PROMPT = """\
@@ -66,7 +66,8 @@ class BenchmarkRunner:
         db_path = ensure_tables(self._context_dir)
         model = build_model()
         tasks = load_tasks(task_ids=task_ids, level=level, max_tasks=max_tasks)
-        ground_truth: dict[int, str] = {}
+        target_ids = {t["task_id"] for t in tasks}
+        ground_truth = load_ground_truth(task_ids=target_ids)
 
         report = BenchmarkReport()
         t0 = time.perf_counter()
