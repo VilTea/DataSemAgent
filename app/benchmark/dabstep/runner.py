@@ -1,8 +1,11 @@
 """BenchmarkRunner — orchestrates DABstep tasks through the agent."""
 from __future__ import annotations
 
+import json
+import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from app.benchmark.base import BenchmarkReport
@@ -29,17 +32,22 @@ When you have the final answer, call submit_answer with the appropriate
 answer_type. Read the task guidelines carefully to choose the right format.
 """
 
+_REPORT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "dabstep"
+
 
 @dataclass
 class TaskResult:
     task_id: int
     question: str
     level: str
+    answer_type: str = ""
+    guidelines: str = ""
     predicted: str = ""
     expected: str = ""
     passed: bool = False
     duration_ms: float = 0
     error: str = ""
+    trace_file: str = ""
 
 
 class BenchmarkRunner:
@@ -58,7 +66,6 @@ class BenchmarkRunner:
         db_path = ensure_tables(self._context_dir)
         model = build_model()
         tasks = load_tasks(task_ids=task_ids, level=level, max_tasks=max_tasks)
-        # task_scores is 936K rows — skip download, score manually later.
         ground_truth: dict[int, str] = {}
 
         report = BenchmarkReport()
@@ -69,7 +76,37 @@ class BenchmarkRunner:
             report.results.append(result)
 
         report.total_duration_ms = (time.perf_counter() - t0) * 1000
+        self._save_report(report)
         return report
+
+    def _save_report(self, report: BenchmarkReport) -> None:
+        _REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        path = _REPORT_DIR / "report.json"
+        data = {
+            "accuracy": report.accuracy,
+            "passed": report.passed,
+            "total": report.total,
+            "duration_s": report.total_duration_ms / 1000,
+            "tasks": [
+                {
+                    "task_id": r.task_id,
+                    "level": r.level,
+                    "answer_type": r.answer_type,
+                    "question": r.question,
+                    "guidelines": r.guidelines,
+                    "predicted": r.predicted,
+                    "expected": r.expected,
+                    "passed": r.passed,
+                    "duration_s": r.duration_ms / 1000,
+                    "error": r.error,
+                    "trace_file": r.trace_file,
+                }
+                for r in report.results
+            ],
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+        print(f"Report saved to {path}")
 
     async def _run_single(
         self, task: dict, model, ground_truth: dict[int, str],
@@ -78,6 +115,8 @@ class BenchmarkRunner:
             task_id=task["task_id"],
             question=task["question"],
             level=task.get("level", ""),
+            answer_type=task.get("answer_type", ""),
+            guidelines=task.get("guidelines", ""),
             expected=ground_truth.get(task["task_id"], ""),
         )
         t0 = time.perf_counter()
@@ -99,11 +138,15 @@ class BenchmarkRunner:
 
             captured: dict = {}
 
-            def _on_answer(ctx, tool_call, tool, result):
-                captured["raw"] = result.content
+            def _on_answer(ctx, tool_call, tool, res):
+                captured["raw"] = res.content
+                captured["session_id"] = getattr(
+                    ctx.memory, "_eval_session_id", ""
+                ) if hasattr(ctx, 'memory') else ""
 
+            collector = EvalCollector()
             pipeline = QueuePipeline()
-            pipeline.register(EvalCollector())
+            pipeline.register(collector)
 
             flow = react_flow(agent_node=agent, pipeline=pipeline)
             async with pipeline.bind(flow.context):
@@ -115,6 +158,7 @@ class BenchmarkRunner:
                 await flow._run_async(flow.context.get_shared())
 
             result.predicted = captured.get("raw", "")
+            result.trace_file = getattr(collector, "_session_id", "")
             if result.predicted and result.expected:
                 result.passed = score(
                     result.predicted, result.expected,
