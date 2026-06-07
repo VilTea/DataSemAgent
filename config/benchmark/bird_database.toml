@@ -1,0 +1,79 @@
+# BIRD benchmark databases — loaded into config.database alongside dabstep
+# Keys: bird_{db_name} — use with SqlExecTool(db_config_key="bird_xxx")
+
+[bird_debit_card_specializing]
+type = "sqlite"
+driver = "aiosqlite"
+
+[bird_debit_card_specializing.specific]
+path = "data/bird/dev_databases/debit_card_specializing/debit_card_specializing.sqlite"
+
+[bird_student_club]
+type = "sqlite"
+driver = "aiosqlite"
+
+[bird_student_club.specific]
+path = "data/bird/dev_databases/student_club/student_club.sqlite"
+
+[bird_thrombosis_prediction]
+type = "sqlite"
+driver = "aiosqlite"
+
+[bird_thrombosis_prediction.specific]
+path = "data/bird/dev_databases/thrombosis_prediction/thrombosis_prediction.sqlite"
+
+[bird_european_football_2]
+type = "sqlite"
+driver = "aiosqlite"
+
+[bird_european_football_2.specific]
+path = "data/bird/dev_databases/european_football_2/european_football_2.sqlite"
+
+[bird_formula_1]
+type = "sqlite"
+driver = "aiosqlite"
+
+[bird_formula_1.specific]
+path = "data/bird/dev_databases/formula_1/formula_1.sqlite"
+
+[bird_california_schools]
+type = "sqlite"
+driver = "aiosqlite"
+
+[bird_california_schools.specific]
+path = "data/bird/dev_databases/california_schools/california_schools.sqlite"
+
+[bird_card_games]
+type = "sqlite"
+driver = "aiosqlite"
+
+[bird_card_games.specific]
+path = "data/bird/dev_databases/card_games/card_games.sqlite"
+
+[bird_codebase_community]
+type = "sqlite"
+driver = "aiosqlite"
+
+[bird_codebase_community.specific]
+path = "data/bird/dev_databases/codebase_community/codebase_community.sqlite"
+
+[bird_financial]
+type = "sqlite"
+driver = "aiosqlite"
+
+[bird_financial.specific]
+path = "data/bird/dev_databases/financial/financial.sqlite"
+
+[bird_twitter]
+type = "sqlite"
+driver = "aiosqlite"
+
+[bird_twitter.specific]
+path = "data/bird/dev_databases/twitter/twitter.sqlite"
+
+[bird_ship_1]
+type = "sqlite"
+driver = "aiosqlite"
+
+[bird_ship_1.specific]
+path = "data/bird/dev_databases/ship_1/ship_1.sqlite"
