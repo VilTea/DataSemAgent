@@ -18,6 +18,8 @@ def main():
                         help="LLM configuration name")
     parser.add_argument("--concurrency", type=int, default=4,
                         help="Number of concurrent tasks")
+    parser.add_argument("--task-timeout", type=int, default=300,
+                        help="Per-task timeout in seconds")
     args = parser.parse_args()
 
     async def _run():
@@ -25,6 +27,7 @@ def main():
         runner = BenchmarkRunner(
             llm_config=args.llm_config,
             concurrency=args.concurrency,
+            task_timeout=args.task_timeout,
         )
         return await runner.run(
             question_ids=args.question_ids,

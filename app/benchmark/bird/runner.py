@@ -34,12 +34,16 @@ _REPORT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "b
 
 def _normalize_val(val: str) -> str:
     """Normalize a string value for comparison — strip whitespace, unify number format."""
+    import re
     v = val.strip().rstrip("%")
+    # Extract the last number from text like "Yes, there are 23,505 more..."
+    nums = re.findall(r"[-+]?[\d,]+\.?\d*", v)
+    if nums:
+        v = nums[-1].replace(",", "")
     try:
         f = float(v)
         if f == int(f):
             return str(int(f))
-        # Round to 6 decimal places for consistency
         return f"{f:.6f}".rstrip("0").rstrip(".")
     except ValueError:
         return v.lower()
@@ -62,9 +66,11 @@ class TaskResult:
 class BenchmarkRunner:
     """Runs BIRD Mini-Dev tasks through the DataSemAgent."""
 
-    def __init__(self, llm_config: str = "default", concurrency: int = 4):
+    def __init__(self, llm_config: str = "default", concurrency: int = 4,
+                 task_timeout: float = 300):
         self._llm_config = llm_config
         self._concurrency = concurrency
+        self._task_timeout = task_timeout
         self._report_lock = asyncio.Lock()
 
     async def run(
@@ -196,7 +202,7 @@ class BenchmarkRunner:
             if task.get("evidence"):
                 question += f"\n\n[Evidence: {task['evidence']}]"
 
-            await flow.ask(question)
+            await asyncio.wait_for(flow.ask(question), timeout=self._task_timeout)
 
             # Capture the textual answer from submit_answer
             predicted_answer = captured.get("raw", "")
@@ -249,12 +255,13 @@ class BenchmarkRunner:
                         if pred_norm == gold_norm:
                             result.passed = True
                             result.error = ""
-                        elif not result.error:
+                        else:
                             result.error = f"Text mismatch: pred={pred_norm} gold={gold_norm}"
                 except Exception as _e:
-                    if not result.error:
-                        result.error = f"Fallback score error: {_e}"
+                    result.error = f"Fallback score error: {_e}"
 
+        except asyncio.TimeoutError:
+            result.error = f"Task timed out after {self._task_timeout}s"
         except Exception as e:
             result.error = str(e)
 

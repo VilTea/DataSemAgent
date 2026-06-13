@@ -75,7 +75,7 @@ def _auto_generate(db_name: str, schema: dict[str, list[dict]]) -> SemanticModel
                     if parent == base or parent == f"{base}s":
                         relationships.append(Relationship(
                             name=f"{table}_to_{parent}",
-                            from_=table, to=parent,
+                            from_dataset=table, to_dataset=parent,
                             from_columns=[col_name], to_columns=["id"],
                         ))
                         break
