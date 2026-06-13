@@ -2,3 +2,4 @@
 enabled = true
 output_dir = "data/eval"
 redact_keys = ["api_key", "password", "token", "secret", "authorization", "x-api-key", "bearer"]
+token_counting = "hybrid"

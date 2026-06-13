@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import Field, model_validator, ConfigDict
+from pydantic import Field, model_validator, ConfigDict, PrivateAttr
 
 from app.hook import HookPoint
 from app.llm import LLM, create_llm
@@ -18,6 +18,13 @@ class AgentNode(BaseAgentNode):
     tool_choice: ToolChoice = Field(default=ToolChoice.AUTO)
 
     llm: LLM | None = Field(default=None, description="大模型请求实例")
+
+    # Eval data pass-through (set during exec_async, read by hooks).
+    # PrivateAttr excludes them from model_dump / serialization.
+    _eval_ttft_ns: int | None = PrivateAttr(default=None)
+    _eval_usage_input: int | None = PrivateAttr(default=None)
+    _eval_usage_output: int | None = PrivateAttr(default=None)
+    _eval_usage_reasoning: int | None = PrivateAttr(default=None)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -101,6 +108,11 @@ class AgentNode(BaseAgentNode):
                     msg_cur = msg
 
             if msg_cur and msg_cur.finish_reason and msg_cur.finish_reason != FinishReason.NONE:
+                    # Stash eval fields before converting to Message (Message drops them)
+                self._eval_ttft_ns = msg_cur.time_to_first_chunk_ns
+                self._eval_usage_input = msg_cur.usage_input_tokens
+                self._eval_usage_output = msg_cur.usage_output_tokens
+                self._eval_usage_reasoning = msg_cur.usage_reasoning_tokens
                 message: Message
                 if msg_cur.finish_reason == FinishReason.TOOL_CALLS:
                     message = Message.from_tool_calls(tool_calls=msg_cur.full_tool_calls, content=msg_cur.full_content, reasoning_content=msg_cur.full_reasoning_content)

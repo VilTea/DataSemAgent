@@ -1,4 +1,5 @@
 import json
+import time
 from typing import Protocol, runtime_checkable, AsyncGenerator, ClassVar
 
 from anthropic import AsyncAnthropic
@@ -40,38 +41,6 @@ def create_llm(config_name: str = 'default', llm_setting: LLMSettings | None = N
         raise ValueError(f"Unknown LLM type '{llm_setting.type}'. Known: {list(_LLM_REGISTRY)}")
     return cls(config_name=config_name, llm_setting=llm_setting)
 
-class TokenCount:
-    # Token constants
-    BASE_MESSAGE_TOKENS = 4
-    FORMAT_TOKENS = 2
-    LOW_DETAIL_IMAGE_TOKENS = 85
-    HIGH_DETAIL_TILE_TOKENS = 170
-
-    def __init__(self, tokenizer):
-        self.tokenizer = tokenizer
-
-    def count_text(self, text: str) -> int:
-        """Calculate tokens for a text string"""
-        return 0 if not text else len(self.tokenizer.encode(text))
-
-    def count_content(self, content: str | list[str | dict]) -> int:
-        """Calculate tokens for message content"""
-        if not content:
-            return 0
-
-        return self.count_text(content) if isinstance(content, str) else (
-            sum([self.count_text(item) if isinstance(item, str) else 0 for item in content]))
-
-    def count_tool_calls(self, tool_calls: list[ToolCall]) -> int:
-        """Calculate tokens for tool calls"""
-        token_count = 0
-        for tool_call in tool_calls:
-            if function := tool_call.function:
-                token_count += self.count_text(function.get("name", ""))
-                token_count += self.count_text(function.get("arguments", ""))
-        return token_count
-
-
 @register_llm
 class OpenAILLM(BaseModel):
     config: LLMSettings
@@ -106,34 +75,47 @@ class OpenAILLM(BaseModel):
     )
     async def ask(self, messages: list[Message], stream: bool = True, temperature: float | None = None) -> AsyncGenerator[AgentCompletion | None]:
         """Send a chat completion request and yield responses."""
-        completion = await self.client.chat.completions.create(
-            model=self.config.model,
-            messages=[msg.model_dump() for msg in messages],
-            temperature=temperature or self.config.temperature,
-            max_tokens=self.config.max_tokens,
-            # max_completion_tokens=self.config.max_tokens,
-            stream=stream,
+        request_params = {
+            "model": self.config.model,
+            "messages": [msg.model_dump() for msg in messages],
+            "temperature": temperature or self.config.temperature,
+            "max_tokens": self.config.max_tokens,
+            "stream": stream,
             **self.config.args
-        )
+        }
+        if stream:
+            request_params["stream_options"] = {"include_usage": True}
+        completion = await self.client.chat.completions.create(**request_params)
         if stream:
             content = ''
+            _usage_obj = None
             async for chunk in completion:
+                if hasattr(chunk, 'usage') and chunk.usage:
+                    _usage_obj = chunk.usage
                 if chunk.choices and (delta := chunk.choices[0].delta):
                     content += delta.content or ''
-                    yield AgentCompletion(
+                    response = AgentCompletion(
                         role=Role.ASSISTANT,
                         content=delta.content,
                         full_content=content,
                         finish_reason=FinishReason(chunk.choices[0].finish_reason)
                     )
+                    if _usage_obj:
+                        response.usage_input_tokens = _usage_obj.prompt_tokens
+                        response.usage_output_tokens = _usage_obj.completion_tokens
+                    yield response
         else:
             if completion.choices and (message := completion.choices[0].message):
-                yield AgentCompletion(
+                response = AgentCompletion(
                     role=Role.ASSISTANT,
                     content=message.content,
                     full_content=message.content,
                     finish_reason=FinishReason(completion.choices[0].finish_reason)
                 )
+                if hasattr(completion, 'usage') and completion.usage:
+                    response.usage_input_tokens = completion.usage.prompt_tokens
+                    response.usage_output_tokens = completion.usage.completion_tokens
+                yield response
 
     @retry(
         wait=wait_random_exponential(min=1, max=60),
@@ -172,6 +154,10 @@ class OpenAILLM(BaseModel):
         if tools:
             request_params["tools"] = tools
             request_params["tool_choice"] = tool_choice or ToolChoice.AUTO
+        if stream:
+            request_params["stream_options"] = {"include_usage": True}
+        t_start = time.time_ns()
+        first_chunk = True
         completion = await self.client.chat.completions.create(**request_params)
 
         if stream:
@@ -179,12 +165,24 @@ class OpenAILLM(BaseModel):
             tool_calls = {}
             content = ''
             reasoning_content = ''
+            _usage_obj = None  # captured from usage chunk (empty choices)
+            _ttft_ns: int | None = None
             async for chunk in completion:
                 choice = chunk.choices[0] if chunk.choices else None
                 delta = chunk.choices[0].delta if chunk.choices else None
+                # Capture usage from this chunk (may arrive on final or dedicated chunk)
+                if hasattr(chunk, 'usage') and chunk.usage:
+                    _usage_obj = chunk.usage
+                # Pure usage chunk (no choices, no delta) — skip
+                if not choice and not delta:
+                    continue
                 if not role and delta.role:
                     role = Role(delta.role)
                 response = AgentCompletion(role=role)
+                if first_chunk:
+                    _ttft_ns = time.time_ns() - t_start
+                    first_chunk = False
+                response.time_to_first_chunk_ns = _ttft_ns
                 reasoning_content += delta.model_extra.get('reasoning_content') or ''
                 response.reasoning_content = delta.model_extra.get('reasoning_content') or ''
                 if delta and delta.content:
@@ -227,6 +225,10 @@ class OpenAILLM(BaseModel):
                 response.full_content = content
                 response.full_tool_calls = list(tool_calls.values())
                 response.finish_reason = FinishReason(choice.finish_reason)
+                # Attach usage on the last response
+                if _usage_obj:
+                    response.usage_input_tokens = _usage_obj.prompt_tokens
+                    response.usage_output_tokens = _usage_obj.completion_tokens
                 yield response
                 if choice.finish_reason:
                     break
@@ -245,6 +247,9 @@ class OpenAILLM(BaseModel):
                 response.full_reasoning_content = response.reasoning_content
                 response.full_content = response.content
                 response.full_tool_calls = response.tool_calls
+                if hasattr(completion, 'usage') and completion.usage:
+                    response.usage_input_tokens = completion.usage.prompt_tokens
+                    response.usage_output_tokens = completion.usage.completion_tokens
                 yield response
             else:
                 yield None
@@ -371,10 +376,15 @@ class AnthropicLLM(BaseModel):
             kwargs["temperature"] = self.config.temperature
 
         if stream:
+            _usage_input: int | None = None
+            _usage_output: int | None = None
             async with self.client.messages.stream(**kwargs) as stream_ctx:
                 content = ''
                 async for event in stream_ctx:
-                    if event.type == "text_delta":
+                    if event.type == "message_start":
+                        if hasattr(event, 'message') and event.message.usage:
+                            _usage_input = event.message.usage.input_tokens
+                    elif event.type == "text_delta":
                         content += event.text
                         yield AgentCompletion(
                             role=Role.ASSISTANT,
@@ -382,10 +392,14 @@ class AnthropicLLM(BaseModel):
                             full_content=content,
                         )
                     elif event.type == "message_delta":
+                        if hasattr(event, 'usage') and event.usage:
+                            _usage_output = event.usage.output_tokens
                         yield AgentCompletion(
                             role=Role.ASSISTANT,
                             full_content=content,
                             finish_reason=FinishReason(event.delta.stop_reason),
+                            usage_input_tokens=_usage_input,
+                            usage_output_tokens=_usage_output,
                         )
         else:
             message = await self.client.messages.create(**kwargs)
@@ -395,6 +409,8 @@ class AnthropicLLM(BaseModel):
                 content=text,
                 full_content=text,
                 finish_reason=FinishReason(message.stop_reason),
+                usage_input_tokens=message.usage.input_tokens if message.usage else None,
+                usage_output_tokens=message.usage.output_tokens if message.usage else None,
             )
 
     @retry(
@@ -428,20 +444,34 @@ class AnthropicLLM(BaseModel):
                 kwargs["tool_choice"] = tc
 
         if stream:
+            t_start = time.time_ns()
+            first_chunk = True
+            _usage_input: int | None = None
+            _usage_output: int | None = None
+            _ttft_ns: int | None = None
             async with self.client.messages.stream(**kwargs) as stream_ctx:
                 content = ''
                 tool_calls: dict[int, ToolCall] = {}
                 current_tool_index = -1
 
                 async for event in stream_ctx:
-                    if event.type == "text_delta":
+                    if event.type == "message_start":
+                        # Anthropic sends usage.input_tokens on message_start
+                        if hasattr(event, 'message') and event.message.usage:
+                            _usage_input = event.message.usage.input_tokens
+                    elif event.type == "text_delta":
                         content += event.text
-                        yield AgentCompletion(
+                        response = AgentCompletion(
                             role=Role.ASSISTANT,
                             content=event.text,
                             full_content=content,
                             full_tool_calls=list(tool_calls.values()) if tool_calls else None,
                         )
+                        if first_chunk:
+                            _ttft_ns = time.time_ns() - t_start
+                            first_chunk = False
+                        response.time_to_first_chunk_ns = _ttft_ns
+                        yield response
                     elif event.type == "content_block_start":
                         if event.content_block.type == "tool_use":
                             current_tool_index += 1
@@ -451,12 +481,17 @@ class AnthropicLLM(BaseModel):
                                 function=Function(name=cb.name, arguments=""),
                             )
                             tool_calls[current_tool_index] = tc
-                            yield AgentCompletion(
+                            response = AgentCompletion(
                                 role=Role.ASSISTANT,
                                 full_content=content,
                                 tool_calls=[tc],
                                 full_tool_calls=list(tool_calls.values()),
                             )
+                            if first_chunk:
+                                _ttft_ns = time.time_ns() - t_start
+                                first_chunk = False
+                            response.time_to_first_chunk_ns = _ttft_ns
+                            yield response
                     elif event.type == "content_block_delta":
                         if event.delta.type == "input_json_delta":
                             tc = tool_calls.get(current_tool_index)
@@ -469,11 +504,16 @@ class AnthropicLLM(BaseModel):
                                     full_tool_calls=list(tool_calls.values()),
                                 )
                     elif event.type == "message_delta":
+                        # message_delta carries final usage.output_tokens
+                        if hasattr(event, 'usage') and event.usage:
+                            _usage_output = event.usage.output_tokens
                         yield AgentCompletion(
                             role=Role.ASSISTANT,
                             full_content=content,
                             full_tool_calls=list(tool_calls.values()) if tool_calls else None,
                             finish_reason=FinishReason(event.delta.stop_reason),
+                            usage_input_tokens=_usage_input,
+                            usage_output_tokens=_usage_output,
                         )
         else:
             message = await self.client.messages.create(**kwargs)
@@ -492,4 +532,6 @@ class AnthropicLLM(BaseModel):
                 tool_calls=tc_list if tc_list else None,
                 full_tool_calls=tc_list if tc_list else None,
                 finish_reason=FinishReason(message.stop_reason),
+                usage_input_tokens=message.usage.input_tokens if message.usage else None,
+                usage_output_tokens=message.usage.output_tokens if message.usage else None,
             )

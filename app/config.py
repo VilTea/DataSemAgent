@@ -121,6 +121,10 @@ class EvalSettings(BaseModel):
         default_factory=lambda: ["api_key", "password", "token", "secret", "authorization"],
         description="Keys to redact from collected data",
     )
+    token_counting: str = Field(
+        default="hybrid",
+        description="Token counting strategy: 'api' | 'tiktoken' | 'hybrid'",
+    )
 
     setting_name: ClassVar[str] = "eval"
     base_path: ClassVar[Path] = PROJECT_ROOT / "config" / "eval.toml"

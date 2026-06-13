@@ -107,6 +107,11 @@ class AgentCompletion(BaseModel):
     tool_calls: list[ToolCall] | None = None
     full_tool_calls: list[ToolCall] | None = None
     finish_reason: FinishReason = FinishReason.NONE
+    # ── Phase 1 eval fields ──
+    time_to_first_chunk_ns: int | None = None
+    usage_input_tokens: int | None = None
+    usage_output_tokens: int | None = None
+    usage_reasoning_tokens: int | None = None
 
 
 class Message(BaseModel):
