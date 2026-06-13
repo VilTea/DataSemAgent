@@ -50,6 +50,7 @@ class BenchmarkConfig:
             (DatabaseSettings, "database.toml"),
             (AgentSettings, "agent.toml"),
             (GraphDatabaseSettings, "graph_database.toml"),
+            (DatabaseSettings, "bird_database.toml"),
         ]:
             path = _BENCHMARK_CONFIG_ROOT / filename
             if not path.exists():
@@ -59,7 +60,14 @@ class BenchmarkConfig:
                 loader.config_class = config_class
                 loader.base_path = path
                 loader.file_type = ("toml",)
-                global_config._configs[config_class.setting_name] = loader.load()
+                loaded = loader.load()
+                # Merge into existing config dict instead of replacing
+                # (multiple TOML files may supply entries for the same setting_name)
+                existing = global_config._configs.get(config_class.setting_name, {})
+                if isinstance(existing, dict) and isinstance(loaded, dict):
+                    existing.update(loaded)
+                else:
+                    global_config._configs[config_class.setting_name] = loaded
             except Exception:
                 pass
 
