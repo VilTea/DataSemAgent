@@ -1,0 +1,243 @@
+version: 0.1.1
+semantic_model:
+- name: bird_debit_card_specializing
+  description: Gas station chain — customers, transactions, products, monthly consumption
+  datasets:
+  - name: customers
+    source: customers
+    description: Customer accounts with segment and preferred currency
+    primary_key:
+    - CustomerID
+    fields:
+    - name: customer_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: CustomerID
+    - name: segment
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: Segment
+      description: Customer segment (SME/LAM/KAM)
+      dimension:
+        is_time: false
+    - name: currency
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: Currency
+      description: Preferred currency (EUR/CZK)
+      dimension:
+        is_time: false
+
+  - name: gasstations
+    source: gasstations
+    description: Gas station locations with chain and country info
+    primary_key:
+    - GasStationID
+    fields:
+    - name: station_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: GasStationID
+    - name: chain_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: ChainID
+      description: Chain identifier
+      dimension:
+        is_time: false
+    - name: country
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: Country
+      description: Country code (CZE etc.)
+      dimension:
+        is_time: false
+    - name: station_segment
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: Segment
+      description: Station market segment (Premium/Value/Other)
+      dimension:
+        is_time: false
+
+  - name: products
+    source: products
+    description: Product catalog
+    primary_key:
+    - ProductID
+    fields:
+    - name: product_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: ProductID
+    - name: product_name
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: Description
+      description: Product description
+      dimension:
+        is_time: false
+
+  - name: transactions
+    source: transactions_1k
+    description: Fuel purchase transactions (1000 rows)
+    primary_key:
+    - TransactionID
+    fields:
+    - name: transaction_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: TransactionID
+    - name: date
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: Date
+      description: Transaction date
+      dimension:
+        is_time: true
+    - name: time
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: Time
+      description: Transaction time
+      dimension:
+        is_time: true
+    - name: customer_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: CustomerID
+    - name: card_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: CardID
+    - name: station_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: GasStationID
+    - name: product_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: ProductID
+    - name: amount
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: Amount
+      description: Quantity in liters
+    - name: price
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: Price
+      description: Total price in local currency
+
+  - name: monthly_consumption
+    source: yearmonth
+    description: Monthly fuel consumption per customer
+    primary_key:
+    - CustomerID
+    - Date
+    fields:
+    - name: customer_id
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: CustomerID
+    - name: month
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: Date
+      description: Month in YYYYMM format
+      dimension:
+        is_time: true
+    - name: consumption
+      expression:
+        dialects:
+        - dialect: ANSI_SQL
+          expression: Consumption
+      description: Monthly consumption amount
+
+  relationships:
+  - name: transaction_to_customer
+    from: transactions
+    to: customers
+    from_columns:
+    - customer_id
+    to_columns:
+    - customer_id
+  - name: transaction_to_station
+    from: transactions
+    to: gasstations
+    from_columns:
+    - station_id
+    to_columns:
+    - station_id
+  - name: transaction_to_product
+    from: transactions
+    to: products
+    from_columns:
+    - product_id
+    to_columns:
+    - product_id
+  - name: consumption_to_customer
+    from: monthly_consumption
+    to: customers
+    from_columns:
+    - customer_id
+    to_columns:
+    - customer_id
+
+  metrics:
+  - name: total_transactions
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: COUNT(transactions.transaction_id)
+    description: Total number of transactions
+  - name: total_revenue
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: SUM(transactions.price)
+    description: Total revenue from all transactions
+  - name: avg_transaction_price
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: AVG(transactions.price)
+    description: Average price per transaction
+  - name: total_volume
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: SUM(transactions.amount)
+    description: Total fuel volume in liters
+  - name: customer_count
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: COUNT(DISTINCT customers.customer_id)
+    description: Number of unique customers
+  - name: avg_monthly_consumption
+    expression:
+      dialects:
+      - dialect: ANSI_SQL
+        expression: AVG(monthly_consumption.consumption)
+    description: Average monthly consumption per customer

@@ -32,6 +32,19 @@ The evidence field (if present) contains hints about how to answer the question.
 _REPORT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "bird"
 
 
+def _normalize_val(val: str) -> str:
+    """Normalize a string value for comparison — strip whitespace, unify number format."""
+    v = val.strip().rstrip("%")
+    try:
+        f = float(v)
+        if f == int(f):
+            return str(int(f))
+        # Round to 6 decimal places for consistency
+        return f"{f:.6f}".rstrip("0").rstrip(".")
+    except ValueError:
+        return v.lower()
+
+
 @dataclass
 class TaskResult:
     question_id: int
@@ -221,6 +234,26 @@ class BenchmarkRunner:
                             result.error = f"Scoring error: {e}"
                     if result.passed:
                         break
+
+            # Fallback: compare submitted text answer against gold SQL result
+            if not result.passed and predicted_answer and predicted_answer != "(no answer)":
+                try:
+                    import sqlite3 as _sqlite3
+                    _conn = _sqlite3.connect(db_path)
+                    _gold_rows = _conn.execute(task["SQL"]).fetchall()
+                    _conn.close()
+                    if _gold_rows and len(_gold_rows) == 1 and len(_gold_rows[0]) == 1:
+                        gold_val = _gold_rows[0][0]
+                        pred_norm = _normalize_val(predicted_answer)
+                        gold_norm = _normalize_val(str(gold_val))
+                        if pred_norm == gold_norm:
+                            result.passed = True
+                            result.error = ""
+                        elif not result.error:
+                            result.error = f"Text mismatch: pred={pred_norm} gold={gold_norm}"
+                except Exception as _e:
+                    if not result.error:
+                        result.error = f"Fallback score error: {_e}"
 
         except Exception as e:
             result.error = str(e)

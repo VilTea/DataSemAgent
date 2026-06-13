@@ -274,7 +274,7 @@ class OSISpecification(BaseModel):
     def load_from_yaml(yaml_path: str | Path) -> "OSISpecification":
         """Load and validate OSI specification from a YAML file"""
         import yaml
-        with open(yaml_path, 'r') as f:
+        with open(yaml_path, 'r', encoding='utf-8') as f:
             data = yaml.safe_load(f)
         return OSISpecification(**data)
 
