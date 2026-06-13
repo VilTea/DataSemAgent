@@ -17,36 +17,44 @@ from .scorer import score
 from .task_loader import ensure_databases, get_db_info, load_tasks
 
 _BIRD_SYSTEM_PROMPT = """\
-You are a data analyst. Answer the question using SQL queries against the database.
+You are a data analyst. Write a SINGLE SQL query that directly answers the question.
 
-Use sql_exec to query the database. Use ONLY the EXACT table and column names from
-<sql_schema> in the system prompt — raw column names from the database will be
-REJECTED by the translator.
+Rules:
+- Use ONLY field names from <sql_schema>. Raw column names are REJECTED.
+- Write ONE query whose result IS the answer. Do NOT explore the schema first
+  unless you genuinely don't understand the table structure.
+- The query result will be compared against a reference — same columns, same rows.
+- If the question asks for a single value, your query must return exactly one row
+  with one column.
+- If the question asks for a list, return one column with multiple rows.
 
-When you have the final answer, call submit_answer with the appropriate
-answer_type. Read the task guidelines carefully to choose the right format.
+When submitting the final answer via submit_answer:
+- For numbers: submit just the number (e.g. '42' or '3.14'), no extra text.
+- For names/text: submit just the value (e.g. 'CZE'), no extra text.
+- For lists: submit as a comma-separated list (e.g. 'A, B, C').
+- If the question cannot be answered, submit 'Not Applicable'.
 
-The evidence field (if present) contains hints about how to answer the question.
+The evidence field (if present) contains hints about the expected SQL logic.
 """
 
 _REPORT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "bird"
 
 
-def _normalize_val(val: str) -> str:
-    """Normalize a string value for comparison — strip whitespace, unify number format."""
-    import re
-    v = val.strip().rstrip("%")
-    # Extract the last number from text like "Yes, there are 23,505 more..."
-    nums = re.findall(r"[-+]?[\d,]+\.?\d*", v)
-    if nums:
-        v = nums[-1].replace(",", "")
+def _values_match(a: str, b: str) -> bool:
+    """Compare two string values — try numeric, then case-insensitive text."""
+    a, b = a.strip().rstrip("%"), b.strip().rstrip("%")
+    if a == b:
+        return True
+    # Numeric comparison
     try:
-        f = float(v)
-        if f == int(f):
-            return str(int(f))
-        return f"{f:.6f}".rstrip("0").rstrip(".")
-    except ValueError:
-        return v.lower()
+        fa, fb = float(a.replace(",", "")), float(b.replace(",", ""))
+        if fa == fb:
+            return True
+        if fb != 0 and abs(fa - fb) / abs(fb) < 1e-4:
+            return True  # close enough (0.01% tolerance)
+    except (ValueError, ZeroDivisionError):
+        pass
+    return a.lower() == b.lower()
 
 
 @dataclass
@@ -209,39 +217,42 @@ class BenchmarkRunner:
             result.predicted = predicted_answer if predicted_answer else "(no answer)"
             result.trace_file = getattr(collector, "_session_id", "")
 
-            # Score by comparing execution results of LLM SQL vs ground-truth SQL
+            # Score: (1) last SQL result-set vs gold SQL, (2) text answer vs gold result
             from app.semantics.sql.translator import SQLTranslator
             from app.semantics.sql.parser import OSIModelParser
-
-            msgs = flow.context.memory.messages if hasattr(flow.context, 'memory') else []
+            import sqlglot
             translator = SQLTranslator(OSIModelParser(model), strict=False)
-            for msg in msgs:
+
+            # Find the last sql_exec call
+            msgs = flow.context.memory.messages if hasattr(flow.context, 'memory') else []
+            last_sql = ""
+            for msg in reversed(msgs):
                 if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                    for tc in msg.tool_calls:
-                        if tc.function.name != "sql_exec":
-                            continue
-                        try:
-                            args = json.loads(tc.function.arguments)
-                            llm_sql = args.get("sql", "")
-                            if not llm_sql:
-                                continue
-                            physical = translator.translate(llm_sql)
-                            import sqlglot
-                            dialect_sql = sqlglot.transpile(
-                                physical.physical_sql, write="sqlite")[0]
-                            passed, err = score(dialect_sql, task["SQL"], db_path)
-                            if passed:
-                                result.passed = True
-                                break
-                            # Keep last error for diagnostics
-                            if err:
-                                result.error = err
-                        except Exception as e:
-                            result.error = f"Scoring error: {e}"
-                    if result.passed:
+                    for tc in reversed(msg.tool_calls):
+                        if tc.function.name == "sql_exec":
+                            try:
+                                args = json.loads(tc.function.arguments)
+                                last_sql = args.get("sql", "")
+                            except Exception:
+                                pass
+                            break
+                    if last_sql:
                         break
 
-            # Fallback: compare submitted text answer against gold SQL result
+            if last_sql:
+                try:
+                    physical = translator.translate(last_sql)
+                    dialect_sql = sqlglot.transpile(
+                        physical.physical_sql, write="sqlite")[0]
+                    passed, err = score(dialect_sql, task["SQL"], db_path)
+                    if passed:
+                        result.passed = True
+                    elif err:
+                        result.error = err
+                except Exception as e:
+                    result.error = f"Scoring error: {e}"
+
+            # Text answer vs gold result (handles multi-step reasoning)
             if not result.passed and predicted_answer and predicted_answer != "(no answer)":
                 try:
                     import sqlite3 as _sqlite3
@@ -249,16 +260,15 @@ class BenchmarkRunner:
                     _gold_rows = _conn.execute(task["SQL"]).fetchall()
                     _conn.close()
                     if _gold_rows and len(_gold_rows) == 1 and len(_gold_rows[0]) == 1:
-                        gold_val = _gold_rows[0][0]
-                        pred_norm = _normalize_val(predicted_answer)
-                        gold_norm = _normalize_val(str(gold_val))
-                        if pred_norm == gold_norm:
+                        gold_str = str(_gold_rows[0][0]).strip()
+                        if _values_match(predicted_answer.strip(), gold_str):
                             result.passed = True
                             result.error = ""
-                        else:
-                            result.error = f"Text mismatch: pred={pred_norm} gold={gold_norm}"
+                        elif not result.error:
+                            result.error = f"Text mismatch: pred={predicted_answer[:60]} gold={gold_str[:60]}"
                 except Exception as _e:
-                    result.error = f"Fallback score error: {_e}"
+                    if not result.error:
+                        result.error = f"Text compare error: {_e}"
 
         except asyncio.TimeoutError:
             result.error = f"Task timed out after {self._task_timeout}s"
