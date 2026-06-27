@@ -65,3 +65,25 @@ class TestHookRegistryUnregister:
         reg = HookRegistry()
         consumer = ConsumerWithValidHooks()
         reg.unregister(consumer)  # should not raise
+
+
+class _ConsumerWithContextCompressed:
+    """Regression: EvalCollector-style consumer with a CONTEXT_COMPRESSED hook
+    must not be silently dropped by the OBSERVE whitelist (post-landing bug)."""
+
+    @hook(HookPoint.CONTEXT_COMPRESSED)
+    async def _on_compressed(self, ctx):
+        pass
+
+
+class TestObserveWhitelistIncludesContextCompressed:
+    def test_context_compressed_is_in_observe_set(self):
+        from app.hook.registry import HookPoint
+        assert HookPoint.CONTEXT_COMPRESSED in OBSERVE_HOOK_POINTS
+
+    def test_context_compressed_hook_passes_whitelist(self):
+        reg = HookRegistry()
+        consumer = _ConsumerWithContextCompressed()
+        registered = reg.register(consumer, whitelist=OBSERVE_HOOK_POINTS)
+        assert HookPoint.CONTEXT_COMPRESSED in registered, \
+            "CONTEXT_COMPRESSED must survive whitelist filter or EvalCollector's reset hook is silently dropped"

@@ -69,7 +69,31 @@ class TestContextCompressor:
         text = compressor._serialize_for_summary(sample_messages[:4])
         assert "[system]" in text
         assert "[user]" in text
-        assert "[tool result from sql_exec]" in text
+        assert "tool result 1" in text
+
+    def test_tier_2_summary_uses_original_tool_content(self, compressor, sample_messages):
+        """Tier 1 mutates tool messages in place; Tier 2 must use the original
+        snapshot or the summarizer sees '[cleared: name]' instead of actual content."""
+        captured_transcript = []
+
+        class _CaptureLLM:
+            async def ask_tool(self, *, messages, stream=False, **_):
+                # System prompt + user transcript. Capture the transcript.
+                captured_transcript.append(messages[-1].content)
+                yield None
+
+        async def _run():
+            return await compressor.compress(
+                list(sample_messages),
+                context_window=40, threshold=0.5,
+                keep_recent_turns=1, is_turn_boundary=True,
+                llm=_CaptureLLM(),
+            )
+        asyncio.run(_run())
+        assert captured_transcript, "Tier 2 should have called the summarizer"
+        assert "tool result 1" in captured_transcript[0], \
+            "Summarizer must see actual tool content, not '[cleared: ...]' placeholder"
+        assert "[cleared:" not in captured_transcript[0]
 
     def test_tier_2_gated_by_is_turn_boundary(self, compressor, sample_messages):
         async def _run():

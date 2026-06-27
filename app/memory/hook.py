@@ -56,5 +56,5 @@ def install_compression_hook(flow) -> CompressionHook:
     llm_cfg = config.llm.get("default")
     agent_cfg = config.agent.get("default")
     hook_obj = CompressionHook(llm_cfg, agent_cfg)
-    flow.hooks.register(hook_obj)
+    flow.context.hooks.register(hook_obj)
     return hook_obj

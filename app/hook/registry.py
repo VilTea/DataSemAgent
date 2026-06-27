@@ -37,6 +37,7 @@ OBSERVE_HOOK_POINTS = frozenset({
     HookPoint.FLOW_START, HookPoint.FLOW_END,
     HookPoint.NODE_EXEC_BEFORE, HookPoint.NODE_EXEC_AFTER,
     HookPoint.TOOL_BEFORE, HookPoint.TOOL_AFTER,
+    HookPoint.CONTEXT_COMPRESSED,
 })
 
 

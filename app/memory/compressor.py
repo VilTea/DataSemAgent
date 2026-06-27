@@ -37,6 +37,10 @@ class ContextCompressor:
         messages = list(messages)
         keep_start = self._find_keep_zone(messages, keep_recent_turns)
 
+        # Snapshot pre-keep-zone originals before Tier 1 mutation so Tier 2's
+        # summarizer sees actual tool content instead of cleared placeholders.
+        original_pre_keep = [m.model_copy() for m in messages[:keep_start]]
+
         # ---- Tier 1: prune old tool results ----
         for i in range(keep_start):
             if messages[i].role == "tool":
@@ -50,7 +54,7 @@ class ContextCompressor:
             # Still over limit but mid-turn: force-truncate as fallback
             return self._force_truncate(messages, limit)
 
-        transcript = self._serialize_for_summary(messages[:keep_start])
+        transcript = self._serialize_for_summary(original_pre_keep)
         prompt = summary_system_prompt or DEFAULT_SUMMARY_PROMPT
 
         try:
@@ -85,8 +89,6 @@ class ContextCompressor:
         for m in messages:
             role = m.role or "unknown"
             content = m.content or ""
-            if m.role == "tool":
-                content = f"[tool result from {m.name}]"
             lines.append(f"[{role}]: {content}")
         return "\n".join(lines)
 
