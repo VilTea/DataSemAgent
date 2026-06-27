@@ -90,6 +90,9 @@ async def run_ask(model_path: str, lang: str, console: Console) -> None:
     from app.semantics.graph.reasoning.flow import install_reflection_hook
     install_reflection_hook(flow)
 
+    from app.memory.hook import install_compression_hook
+    install_compression_hook(flow)
+
     console.print(f"\n[bold cyan]{i18n.t('cli.ask.welcome')}[/]\n")
 
     while True:

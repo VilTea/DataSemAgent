@@ -186,6 +186,12 @@ class EvalCollector(EventConsumer):
         self._session_span_id = self._session_id
         self._loop = asyncio.get_running_loop()
 
+    @hook(HookPoint.CONTEXT_COMPRESSED)
+    async def _on_context_compressed(self, ctx) -> None:
+        if not self._enabled:
+            return
+        self._msg_snapshot = 0
+
     @hook(HookPoint.FLOW_END)
     async def _on_flow_end(self, ctx) -> None:
         if not self._enabled:
