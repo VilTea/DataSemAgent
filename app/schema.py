@@ -218,6 +218,15 @@ class Message(BaseModel):
         )
 
 
+# Pydantic metaclass blocks classmethods inside the class body; attach after.
+def _message_injected(cls, content: str, role: Role = Role.USER) -> Message:
+    """Create an injected synthetic message (summary, context note, etc.)."""
+    return cls(role=role, content=content, injected=True)
+
+
+Message.injected = classmethod(_message_injected)
+
+
 class Memory(BaseModel):
     messages: list[Message] = Field(default_factory=list)
     max_messages: int = Field(default=300)
