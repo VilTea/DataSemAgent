@@ -64,6 +64,10 @@ class LLMSettings(BaseModel):
     api_type: str = Field(default="openai", description="Azure, Openai, or Ollama")
     api_version: str | None = Field(default=None, description="Azure Openai version if AzureOpenai")
     args: dict[str, Any] = Field(default={}, description="Arguments")
+    context_window: int = Field(
+        default=0, ge=0,
+        description="Model context window in tokens. 0 disables compression.",
+    )
 
     setting_name: ClassVar[str] = "llm"
     base_path: ClassVar[Path] = PROJECT_ROOT / "config" / "llm" / "config.toml"
@@ -106,6 +110,18 @@ class MCPSettings(BaseModel):
 @register_config
 class AgentSettings(BaseModel):
     reflection_interval: int = Field(default=10, ge=0, description="Trigger reflection every N turns. 0 disables reflection.")
+    compression_threshold: float = Field(
+        default=0.8, ge=0.0, le=1.0,
+        description="Trigger ratio of LLMSettings.context_window. 0 disables.",
+    )
+    compression_keep_recent_turns: int = Field(
+        default=3, ge=1,
+        description="Turns to keep unmodified at the end of conversation.",
+    )
+    compression_summary_prompt: str = Field(
+        default="",
+        description="Custom prompt for summarization; empty = built-in default.",
+    )
 
     setting_name: ClassVar[str] = "agent"
     base_path: ClassVar[Path] = PROJECT_ROOT / "config" / "agent.toml"

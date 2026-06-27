@@ -1,2 +1,5 @@
 [default]
-reflection_interval = 5
+reflection_interval = 10
+compression_threshold = 0.8
+compression_keep_recent_turns = 3
+# compression_summary_prompt = ""
