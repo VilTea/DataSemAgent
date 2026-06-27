@@ -1,5 +1,4 @@
 /config/llm/
-/config/config.toml
 /docs/
 /datasemagent.egg-info/
 /logs/
