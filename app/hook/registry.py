@@ -31,6 +31,7 @@ class HookPoint:
     TOOL_AFTER = "tool.after"                         # callback(ctx, tool_call, tool, result)
     FLOW_START = "flow.start"                         # callback(ctx)
     FLOW_END = "flow.end"                             # callback(ctx)
+    CONTEXT_COMPRESSED = "memory.context.compressed"  # callback(ctx) — memory mutated by compression
 
 OBSERVE_HOOK_POINTS = frozenset({
     HookPoint.FLOW_START, HookPoint.FLOW_END,
