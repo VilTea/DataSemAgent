@@ -10,6 +10,7 @@ import uuid
 from typing import Any
 
 from app.hook import HookPoint, hook
+from app.memory.token_counter import TokenCounter
 from app.pipeline.abc import EventConsumer
 from app.schema import FinishReason
 
@@ -133,7 +134,7 @@ class EvalCollector(EventConsumer):
         self._output_dir = cfg.output_dir
         self._redact_keys = frozenset(k.lower() for k in cfg.redact_keys)
         self._token_counting: str = getattr(cfg, 'token_counting', 'hybrid')
-        self._tiktoken_enc: object | None = None
+        self._token_counter = TokenCounter()
 
         self._session_id: str = ""
         self._session_span_id: str = ""
@@ -352,21 +353,7 @@ class EvalCollector(EventConsumer):
 
     def _count_tokens(self, obj: str | list[dict]) -> int:
         """Estimate token count with tiktoken (cl100k_base, lazy-loaded)."""
-        if self._tiktoken_enc is None:
-            try:
-                import tiktoken
-                self._tiktoken_enc = tiktoken.get_encoding("cl100k_base")
-            except Exception:
-                return 0
-        if isinstance(obj, str):
-            return len(self._tiktoken_enc.encode(obj))
-        # list of chat message dicts
-        total = 0
-        for msg in obj:
-            total += len(self._tiktoken_enc.encode(
-                (msg.get("role") or "") + " " + (msg.get("content") or "")
-            ))
-        return total
+        return self._token_counter.count(obj)
 
     async def _flush(self) -> None:
         if not self._events:
