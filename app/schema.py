@@ -23,9 +23,10 @@ import json
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from app.util import MultiValueEnum
+from app.memory.token_counter import TokenCounter
 
 
 class FinishReason(MultiValueEnum):
@@ -230,6 +231,8 @@ Message.injected = classmethod(_message_injected)
 class Memory(BaseModel):
     messages: list[Message] = Field(default_factory=list)
     max_messages: int = Field(default=300)
+    _token_total: int = PrivateAttr(default=0)
+    _token_counter: TokenCounter = PrivateAttr(default_factory=TokenCounter)
 
     def upsert_message(self, message: Message, index: int, role: ROLE_TYPE = None) -> None:
         if self.messages:
@@ -248,6 +251,7 @@ class Memory(BaseModel):
     def add_message(self, message: Message) -> None:
         """Add a message to memory"""
         self.messages.append(message)
+        self._token_total += self._token_counter.count([message.to_dict()])
         self._truncate()
 
     def add_messages(self, messages: list[Message]) -> None:
@@ -266,10 +270,14 @@ class Memory(BaseModel):
         while cut > 0 and self.messages[cut].role == Role.TOOL:
             cut -= 1
         self.messages = self.messages[cut:]
+        self._token_total = self._token_counter.count(
+            [m.to_dict() for m in self.messages]
+        )
 
     def clear(self) -> None:
         """Clear all messages"""
         self.messages.clear()
+        self._token_total = 0
 
     def get_recent_messages(self, n: int) -> list[Message]:
         """Get n most recent messages"""
